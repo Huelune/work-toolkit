@@ -1,0 +1,75 @@
+import argparse
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import func_diff as fdf  # noqa: E402
+
+
+def names(src):
+    return fdf.find_functions(src.splitlines())
+
+
+class ScannerTest(unittest.TestCase):
+    def test_plain_and_static(self):
+        src = "int g;\n\nint add(int a, int b)\n{\n  return a + b;\n}\nstatic void helper(void) { }\n"
+        self.assertEqual(names(src), [("add", 3, 6), ("helper", 7, 7)])
+
+    def test_simulink_style(self):
+        src = ("/* Model step function */\n"
+               "void Model_step(void)\n"
+               "{\n"
+               "  if (x) {\n"
+               "    y = 1;\n"
+               "  }\n"
+               "}\n")
+        self.assertEqual(names(src), [("Model_step", 2, 7)])
+
+    def test_macro_and_extension_signatures(self):
+        src = ("FUNC(void, RTE_CODE) Rte_Foo(void)\n{\n}\n"
+               "__interrupt void ISR_Timer(void) {\n}\n")
+        self.assertEqual(names(src), [("Rte_Foo", 1, 3), ("ISR_Timer", 4, 5)])
+
+    def test_ifdef_split_signature(self):
+        src = "#ifdef A\nvoid f(int a)\n#else\nvoid f(void)\n#endif\n{\n}\n"
+        self.assertEqual(names(src), [("f", 2, 7)])
+
+    def test_not_functions(self):
+        src = ("void proto(void);\n"
+               "void (*fp)(int);\n"
+               "int arr[] = { 1, 2 };\n"
+               "struct S { int a; } s = { 0 };\n"
+               "typedef struct { int b; } T;\n"
+               "struct P __attribute__((packed)) { int c; };\n"
+               "enum E { A, B };\n")
+        self.assertEqual(names(src), [])
+
+    def test_braces_in_comments_strings_and_macros(self):
+        src = ('#define BLOCK() do { \\\n'
+               '    x(); } while (0)\n'
+               'void f(int a /* { */)\n'
+               '{\n'
+               '  const char *s = "}\\"{";\n'
+               "  char c = '}';\n"
+               '  // }\n'
+               '}\n')
+        self.assertEqual(names(src), [("f", 3, 8)])
+
+    def test_unbalanced_returns_none(self):
+        self.assertIsNone(names("#ifdef A\nvoid f(int a) {\n#else\nvoid f(void) {\n#endif\n}\n"))
+        self.assertIsNone(names("void f(void) {\n}\n}\n"))
+
+    def test_split_units(self):
+        src = "int g;\nvoid f(void) {\n}\n#if A\nvoid f(void) {\n}\n#endif\n"
+        u = fdf.split_units(src.splitlines())
+        self.assertEqual(list(u), [fdf.FUNC_OUTSIDE, "f", "f#2"])
+        self.assertEqual(u[fdf.FUNC_OUTSIDE], [1, 4, 7])
+        self.assertEqual(u["f"], [2, 3])
+        self.assertEqual(u["f#2"], [5, 6])
+
+
+if __name__ == "__main__":
+    unittest.main()
