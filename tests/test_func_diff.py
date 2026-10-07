@@ -98,5 +98,35 @@ class ScannerTest(unittest.TestCase):
         self.assertEqual(names("#if 0\nx = 'a\n#define X {\n#endif\nint y;\nvoid g(void)\n{\n}\n"), [("g", 6, 8)])
 
 
+class ListTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_excel_layout(self):
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        for row in [("파일명", "함수명"), ("motor.c", "Motor_Init"), (None, "Motor_Step"),
+                    ("sensor.c", "Sensor_Read"), ("sensor.c", "(함수 외)"), (None, None),
+                    ("util.c", None), ("motor.c", "Motor_Stop")]:
+            ws.append(row)
+        ws.merge_cells("A2:A3")
+        p = Path(self.tmp.name, "list.xlsx")
+        wb.save(p)
+        self.assertEqual(fdf.load_func_list(p), {
+            "motor.c": {"Motor_Init", "Motor_Step", "Motor_Stop"},
+            "sensor.c": {"Sensor_Read", fdf.FUNC_OUTSIDE},
+            "util.c": None})
+
+    def test_text_layout(self):
+        p = Path(self.tmp.name, "list.txt")
+        p.write_text("파일,함수\nmotor.c,Motor_Init\n,Motor_Step\n# 주석\nutil.c\nutil.c,Ignored\n",
+                     encoding="utf-8")
+        self.assertEqual(fdf.load_func_list(p), {"motor.c": {"Motor_Init", "Motor_Step"}, "util.c": None})
+
+
 if __name__ == "__main__":
     unittest.main()

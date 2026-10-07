@@ -21,7 +21,7 @@ folder_diff.py와 같은 폴더에 있어야 합니다.
 import bisect
 import re
 
-import folder_diff as fd  # noqa: F401  (Task 3부터 사용)
+import folder_diff as fd
 
 FUNC_OUTSIDE = "(함수 외)"   # 함수에 속하지 않는 줄을 묶은 단위
 WHOLE_FILE = "(파일 전체)"   # 분석 불가 파일이나 목록의 '모든 함수' 항목
@@ -199,3 +199,29 @@ def split_units(lines):
         inside.update(range(s, e + 1))
     units[FUNC_OUTSIDE] = [n for n in range(1, len(lines) + 1) if n not in inside]
     return units
+
+
+# ---------------------------------------------------------------- 비교 대상 목록
+FUNC_HEADERS = {"함수", "함수명", "함수 이름", "함수이름", "function", "func", "function name"}
+
+
+def load_func_list(path):
+    """목록 파일 → {파일 항목: 함수명 집합 또는 None(그 파일의 모든 함수)} (목록 순서 유지)"""
+    plan, cur = {}, None
+    for k, (f, fn) in enumerate(fd.read_rows(path, 2)):
+        f = "" if f is None else str(f).strip()
+        fn = "" if fn is None else str(fn).strip()
+        if k == 0 and (f.casefold() in fd.TARGET_HEADERS or fn.casefold() in FUNC_HEADERS):
+            continue  # 제목 행
+        cur = f or cur  # 파일명이 비어 있거나 병합 셀이면 위 파일명을 이어 씀
+        if not cur or not (f or fn):
+            continue
+        if fn.replace(" ", "") in ("(함수외)", "함수외"):
+            fn = FUNC_OUTSIDE
+        if not fn:
+            plan[cur] = None
+        elif cur not in plan:
+            plan[cur] = {fn}
+        elif plan[cur] is not None:
+            plan[cur].add(fn)
+    return plan
