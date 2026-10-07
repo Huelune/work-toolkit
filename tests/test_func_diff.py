@@ -88,6 +88,10 @@ class ScannerTest(unittest.TestCase):
                '#include "a/*b"\nvoid h(void)\n{\n}\n')
         self.assertEqual(names(src), [("f", 2, 4), ("g", 6, 8), ("h", 10, 12)])
 
+    def test_unterminated_quotes(self):
+        self.assertEqual(names("#error don't do this\nvoid f(void)\n{\n}\n"), [("f", 2, 4)])
+        self.assertEqual(names("#if 0\nthis doesn't { build\n#endif\nvoid g(void)\n{\n}\n"), [("g", 4, 6)])
+
 
 if __name__ == "__main__":
     unittest.main()
