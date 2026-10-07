@@ -10,12 +10,15 @@
     python folder_diff.py 폴더A 폴더B -o report      # report.xlsx + report.html
     python folder_diff.py 폴더A 폴더B -w --exclude build "src/*.tmp"
     python folder_diff.py 폴더A 폴더B --ext .py .c .h .m
+    python folder_diff.py 폴더A 폴더B -l 대상목록.xlsx -o report
 
 옵션:
     -w, --ignore-whitespace   줄 앞뒤 공백/줄바꿈(CRLF·LF) 차이 무시
     -B, --ignore-blank-lines  빈 줄 차이 무시
     -x, --exclude PATTERN...  제외할 파일/폴더 패턴 (glob, '/'가 들어가면 상대 경로 전체와 비교)
     -e, --ext EXT...          지정한 확장자만 비교
+    -l, --list FILE           목록에 있는 파일만 비교 (.xlsx는 첫 시트 A열, .txt는 한 줄에 하나)
+                              파일명만 쓰면 하위 폴더 어디에 있든 찾음 (대소문자 무시, 경로·glob도 가능)
     -c, --context N           diff 앞뒤로 보여줄 줄 수 (기본 3)
     -o, --report NAME         NAME.xlsx(파일 목록)와 NAME.html(변경 내용)을 함께 저장
     --html FILE               변경 내용을 나란히 비교하는 HTML 리포트만 저장
@@ -42,6 +45,8 @@ DEFAULT_EXCLUDES = [".git", ".svn", "__pycache__", ".idea", ".vscode", "*.pyc", 
 ENCODINGS = ["utf-8-sig", "cp949", "latin-1"]
 UTF16_BOMS = (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
 INLINE_DIFF_MAX = 2000  # 이보다 긴 줄은 HTML에서 글자 단위 강조 생략
+# 비교 대상 목록의 첫 칸이 이 중 하나면 제목으로 보고 건너뜀
+TARGET_HEADERS = {"파일", "파일명", "파일 이름", "파일이름", "경로", "file", "filename", "file name", "name", "path"}
 
 
 # ---------------------------------------------------------------- 파일 수집
@@ -122,19 +127,64 @@ def normalize(lines, ignore_ws, ignore_blank):
     return out
 
 
+# ---------------------------------------------------------------- 비교 대상 목록
+def load_targets(path: Path):
+    """엑셀(.xlsx) 첫 시트의 A열, 또는 텍스트 파일의 각 줄에서 비교 대상 목록을 읽음"""
+    if path.suffix.lower() in (".xlsx", ".xlsm"):
+        from openpyxl import load_workbook
+        wb = load_workbook(path, read_only=True, data_only=True)
+        values = [row[0] for row in wb.worksheets[0].iter_rows(max_col=1, values_only=True) if row]
+        wb.close()
+    else:
+        values = [l for l in decode_lines(path.read_bytes())[0] if not l.lstrip().startswith("#")]
+    values = [str(v).strip() for v in values if v is not None and str(v).strip()]
+    if values and values[0].casefold() in TARGET_HEADERS:  # 첫 칸이 제목이면 건너뜀
+        values = values[1:]
+    return list(dict.fromkeys(values))  # 중복 제거 (순서 유지)
+
+
+def match_targets(files, targets):
+    """목록 항목(파일명, 상대 경로 또는 glob 패턴, 대소문자 무시)에 맞는 파일과,
+    양쪽 폴더 어디에서도 찾지 못한 항목을 반환"""
+    by_name, by_path = {}, {}
+    for rel in files:
+        by_name.setdefault(rel.rsplit("/", 1)[-1].casefold(), []).append(rel)
+        by_path[rel.casefold()] = rel
+    selected, missing = set(), []
+    for t in targets:
+        key = t.replace("\\", "/").strip("/").casefold()
+        if any(ch in key for ch in "*?["):
+            hits = [r for r in files if fnmatch.fnmatchcase(
+                r.casefold() if "/" in key else r.rsplit("/", 1)[-1].casefold(), key)]
+        elif "/" in key:
+            hits = [by_path[key]] if key in by_path else []
+        else:
+            hits = by_name.get(key, [])
+        selected.update(hits)
+        if not hits:
+            missing.append(t)
+    return selected, missing
+
+
 # ---------------------------------------------------------------- 비교
-def compare(dir_a: Path, dir_b: Path, args):
+def compare(dir_a: Path, dir_b: Path, args, targets=None):
     excludes = [p.replace("\\", "/").strip("/") for p in DEFAULT_EXCLUDES + (args.exclude or [])]
     exts = {e.lower() if e.startswith(".") else "." + e.lower() for e in (args.ext or [])}
     errors = []
     fa = collect_files(dir_a, excludes, exts, errors)
     fb = collect_files(dir_b, excludes, exts, errors)
+    missing = []
+    if targets is not None:  # 목록에 있는 파일만 비교
+        selected, missing = match_targets(set(fa) | set(fb), targets)
+        fa = {r: p for r, p in fa.items() if r in selected}
+        fb = {r: p for r, p in fb.items() if r in selected}
 
     result = {"only_a": sorted(set(fa) - set(fb)),
               "only_b": sorted(set(fb) - set(fa)),
               "same": [], "changed": [], "binary_changed": [],
               "format_changed": [],  # 내용은 같고 줄바꿈/인코딩/BOM 등 형식만 다름
               "ignored": [],         # -w/-B 옵션으로 무시된 공백 차이만 있음
+              "missing": missing,    # 비교 대상 목록에는 있지만 양쪽 폴더 모두에 없음
               "errors": errors}      # 권한 없음·잠긴 파일 등 읽기 실패
 
     for rel in sorted(set(fa) & set(fb)):
@@ -238,6 +288,7 @@ def print_report(res, dir_a, dir_b, summary_only):
     line = "=" * 70
     print(f"{C.BOLD}{line}\n 폴더 비교\n  A: {dir_a}\n  B: {dir_b}\n{line}{C.RESET}")
     extra = f"  |  무시됨: {len(res['ignored'])}" if res["ignored"] else ""
+    extra += f"  |  {C.RED}양쪽에 없음: {len(res['missing'])}{C.RESET}" if res["missing"] else ""
     extra += f"  |  {C.RED}오류: {len(res['errors'])}{C.RESET}" if res["errors"] else ""
     print(f"  동일: {len(res['same'])}  |  변경: {count_changed(res)}"
           f"  |  A에만: {len(res['only_a'])}  |  B에만: {len(res['only_b'])}{extra}\n")
@@ -246,6 +297,11 @@ def print_report(res, dir_a, dir_b, summary_only):
         print(f"{C.BOLD}[읽기 오류]{C.RESET}")
         for er in res["errors"]:
             print(f"  {C.RED}! {er['path']}{C.RESET}  ({er['detail']})")
+        print()
+    if res["missing"]:
+        print(f"{C.BOLD}[양쪽에 없음 (비교 대상 목록에만 있음)]{C.RESET}")
+        for p in res["missing"]:
+            print(f"  {C.RED}? {p}{C.RESET}")
         print()
     if res["only_a"]:
         print(f"{C.BOLD}[A에만 있는 파일]{C.RESET}")
@@ -351,6 +407,7 @@ def write_html(res, dir_a, dir_b, out_path):
              f"<span class='del'>A에만 {len(res['only_a'])}</span>"
              f"<span class='add'>B에만 {len(res['only_b'])}</span>"
              f"<span>무시됨 {len(res['ignored'])}</span>"
+             + (f"<span class='del'>양쪽에 없음 {len(res['missing'])}</span>" if res["missing"] else "") +
              f"<span class='del'>오류 {len(res['errors'])}</span></div>"]
 
     if res["errors"]:
@@ -367,7 +424,8 @@ def write_html(res, dir_a, dir_b, out_path):
                      f"</summary>{html_table(c)}</details>")
 
     # 나머지 목록은 엑셀 리포트가 주 용도이므로 접어서 표시
-    others = [("A에만 있는 파일", res["only_a"], "del"), ("B에만 있는 파일", res["only_b"], "add"),
+    others = [("양쪽에 없음 (비교 대상 목록에만 있음)", res["missing"], "del"),
+              ("A에만 있는 파일", res["only_a"], "del"), ("B에만 있는 파일", res["only_b"], "add"),
               ("형식만 다른 파일 (줄바꿈/인코딩/BOM)",
                [f"{c['path']} — {c['detail']}" for c in res["format_changed"]], ""),
               ("변경된 바이너리 파일", res["binary_changed"], ""),
@@ -425,7 +483,8 @@ def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
             ("생성", f"{datetime.now():%Y-%m-%d %H:%M}"), ("옵션", options), (None, None),
             ("구분", "개수"), ("동일", len(res["same"])), ("변경", count_changed(res)),
             ("A에만", len(res["only_a"])), ("B에만", len(res["only_b"])),
-            ("무시됨", len(res["ignored"])), ("오류", len(res["errors"]))]
+            ("무시됨", len(res["ignored"])), ("양쪽에 없음", len(res["missing"])),
+            ("오류", len(res["errors"]))]
     for r, (k, v) in enumerate(info, 1):
         put(ws, r, 1, k, font=bold)
         put(ws, r, 2, v, "header" if k == "구분" else None, bold if k == "구분" else None)
@@ -441,6 +500,7 @@ def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
             [(p, "A에만", None, None, "", "red") for p in res["only_a"]] +
             [(p, "B에만", None, None, "", "green") for p in res["only_b"]] +
             [(p, "무시됨", None, None, "옵션으로 무시된 공백 차이", "gray") for p in res["ignored"]] +
+            [(p, "양쪽에 없음", None, None, "비교 대상 목록에만 있음", "error") for p in res["missing"]] +
             [(er["path"], "오류", None, None, er["detail"], "error") for er in res["errors"]] +
             [(p, "동일", None, None, "", None) for p in res["same"]])
     # 변경 파일 경로를 HTML 리포트의 해당 diff로 링크 (엑셀 파일 기준 상대 경로)
@@ -479,6 +539,8 @@ def main():
                     help="NAME.xlsx(파일 목록)와 NAME.html(변경 내용)을 함께 저장")
     ap.add_argument("--html", metavar="FILE", help="HTML 리포트(변경 내용)만 저장")
     ap.add_argument("--excel", metavar="FILE", help="엑셀 리포트(파일 목록)만 저장")
+    ap.add_argument("-l", "--list", metavar="FILE",
+                    help="비교 대상 목록 파일 (.xlsx는 첫 시트 A열, 그 외는 한 줄에 하나). 목록에 있는 파일만 비교")
     ap.add_argument("--summary", action="store_true", help="요약만 출력")
     ap.add_argument("--no-color", action="store_true", help="콘솔 색상 끄기")
     args = ap.parse_args()
@@ -496,18 +558,27 @@ def main():
     for out in (args.html, args.excel):
         if out:
             Path(out).resolve().parent.mkdir(parents=True, exist_ok=True)
-    if args.excel:
+    list_path = Path(args.list) if args.list else None
+    if list_path:
+        if not list_path.is_file():
+            sys.exit(f"비교 대상 목록 파일을 찾을 수 없습니다: {list_path.resolve()}")
+        if list_path.suffix.lower() == ".xls":
+            sys.exit("구버전 엑셀(.xls)은 읽을 수 없습니다. .xlsx로 저장한 뒤 사용하세요.")
+    if args.excel or (list_path and list_path.suffix.lower() in (".xlsx", ".xlsm")):
         try:
             import openpyxl  # noqa: F401
         except ImportError:
-            sys.exit("엑셀 리포트에는 openpyxl이 필요합니다: pip install openpyxl")
+            sys.exit("엑셀 파일을 다루려면 openpyxl이 필요합니다: pip install openpyxl")
+    targets = load_targets(list_path) if list_path else None
+    if targets == []:
+        sys.exit(f"비교 대상 목록이 비어 있습니다: {list_path.resolve()}")
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if not args.no_color and sys.stdout.isatty():
         enable_color()
 
-    res = compare(dir_a, dir_b, args)
+    res = compare(dir_a, dir_b, args, targets)
     print_report(res, dir_a, dir_b, args.summary)
 
     if args.html:
@@ -521,7 +592,7 @@ def main():
     # 차이가 있으면 종료 코드 1, 읽기 오류가 있으면 2 (CI·배치 스크립트에서 활용 가능)
     if res["errors"]:
         sys.exit(2)
-    has_diff = any(res[k] for k in ("only_a", "only_b", "changed", "format_changed", "binary_changed"))
+    has_diff = any(res[k] for k in ("only_a", "only_b", "changed", "format_changed", "binary_changed", "missing"))
     sys.exit(1 if has_diff else 0)
 
 
