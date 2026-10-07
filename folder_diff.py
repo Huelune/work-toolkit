@@ -7,7 +7,7 @@
 
 사용 예:
     python folder_diff.py 폴더A 폴더B
-    python folder_diff.py 폴더A 폴더B --html report.html --excel report.xlsx
+    python folder_diff.py 폴더A 폴더B -o report      # report.xlsx + report.html
     python folder_diff.py 폴더A 폴더B -w --exclude build "src/*.tmp"
     python folder_diff.py 폴더A 폴더B --ext .py .c .h .m
 
@@ -17,13 +17,14 @@
     -x, --exclude PATTERN...  제외할 파일/폴더 패턴 (glob, '/'가 들어가면 상대 경로 전체와 비교)
     -e, --ext EXT...          지정한 확장자만 비교
     -c, --context N           diff 앞뒤로 보여줄 줄 수 (기본 3)
-    --html FILE               나란히 비교하는 HTML 리포트 저장
-    --excel FILE              엑셀(.xlsx) 리포트 저장 (openpyxl 필요: pip install openpyxl)
+    -o, --report NAME         NAME.xlsx(파일 목록)와 NAME.html(변경 내용)을 함께 저장
+    --html FILE               변경 내용을 나란히 비교하는 HTML 리포트만 저장
+    --excel FILE              파일 목록 엑셀(.xlsx) 리포트만 저장 (openpyxl 필요: pip install openpyxl)
     --summary                 파일 목록 요약만 출력 (diff 내용 생략)
     --no-color                콘솔 색상 끄기
 
 종료 코드: 0 = 차이 없음, 1 = 차이 있음, 2 = 읽기 오류 발생
---excel 외에는 표준 라이브러리만 사용하므로 별도 설치가 필요 없습니다 (Python 3.8+).
+엑셀 리포트 외에는 표준 라이브러리만 사용하므로 별도 설치가 필요 없습니다 (Python 3.8+).
 """
 import argparse
 import codecs
@@ -177,6 +178,11 @@ def compare_file(rel, pa: Path, pb: Path, args, result):
 
 def count_changed(res):
     return len(res["changed"]) + len(res["format_changed"]) + len(res["binary_changed"])
+
+
+def anchors(res):
+    """변경 파일 경로 → HTML 리포트 안의 앵커 id (엑셀에서 링크할 때 사용)"""
+    return {c["path"]: f"f{i}" for i, c in enumerate(res["changed"])}
 
 
 def hunk_span(lines, i1, i2):
@@ -350,36 +356,42 @@ def write_html(res, dir_a, dir_b, out_path):
     if res["errors"]:
         parts.append("<h2>읽기 오류</h2><ul>" +
                      "".join(f"<li class='del'>{e(er['path'])} — {e(er['detail'])}</li>" for er in res["errors"]) + "</ul>")
-    if res["only_a"]:
-        parts.append("<h2>A에만 있는 파일</h2><ul>" +
-                     "".join(f"<li class='del'>{e(p)}</li>" for p in res["only_a"]) + "</ul>")
-    if res["only_b"]:
-        parts.append("<h2>B에만 있는 파일</h2><ul>" +
-                     "".join(f"<li class='add'>{e(p)}</li>" for p in res["only_b"]) + "</ul>")
-    if res["format_changed"]:
-        parts.append("<h2>형식만 다른 파일 (줄바꿈/인코딩/BOM)</h2><ul>" +
-                     "".join(f"<li>{e(c['path'])} — {e(c['detail'])}</li>" for c in res["format_changed"]) + "</ul>")
-    if res["ignored"]:
-        parts.append("<h2>공백 차이만 있는 파일 (옵션으로 무시됨)</h2><ul>" +
-                     "".join(f"<li>{e(p)}</li>" for p in res["ignored"]) + "</ul>")
-    if res["binary_changed"]:
-        parts.append("<h2>변경된 바이너리 파일</h2><ul>" +
-                     "".join(f"<li>{e(p)}</li>" for p in res["binary_changed"]) + "</ul>")
-    if res["changed"]:
-        parts.append("<h2>변경된 파일 (클릭하여 펼치기)</h2>")
-        for c in res["changed"]:
-            parts.append(f"<details><summary>{e(c['path'])} "
-                         f"<span class='add'>+{c['added']}</span> <span class='del'>-{c['removed']}</span>"
-                         f"</summary>{html_table(c)}</details>")
-    parts.append("</body></html>")
+
+    parts.append("<h2>변경 내용 (클릭하여 펼치기)</h2>")
+    if not res["changed"]:
+        parts.append("<p>내용이 바뀐 텍스트 파일이 없습니다.</p>")
+    ids = anchors(res)
+    for c in res["changed"]:
+        parts.append(f"<details id='{ids[c['path']]}'><summary>{e(c['path'])} "
+                     f"<span class='add'>+{c['added']}</span> <span class='del'>-{c['removed']}</span>"
+                     f"</summary>{html_table(c)}</details>")
+
+    # 나머지 목록은 엑셀 리포트가 주 용도이므로 접어서 표시
+    others = [("A에만 있는 파일", res["only_a"], "del"), ("B에만 있는 파일", res["only_b"], "add"),
+              ("형식만 다른 파일 (줄바꿈/인코딩/BOM)",
+               [f"{c['path']} — {c['detail']}" for c in res["format_changed"]], ""),
+              ("변경된 바이너리 파일", res["binary_changed"], ""),
+              ("공백 차이만 있는 파일 (옵션으로 무시됨)", res["ignored"], "")]
+    others = [(t, items, cls) for t, items, cls in others if items]
+    if others:
+        parts.append("<h2>기타 파일 목록</h2>")
+        for title, items, cls in others:
+            parts.append(f"<details><summary>{e(title)} ({len(items)})</summary><ul>" +
+                         "".join(f"<li class='{cls}'>{e(p)}</li>" for p in items) + "</ul></details>")
+
+    # 엑셀 등에서 report.html#f3 처럼 열면 해당 파일을 펼쳐서 보여줌
+    parts.append("<script>function openHash(){var d=document.getElementById(location.hash.slice(1));"
+                 "if(d&&d.tagName==='DETAILS'){d.open=true;d.scrollIntoView();}}"
+                 "addEventListener('hashchange',openHash);openHash();</script></body></html>")
     Path(out_path).write_text("\n".join(parts), encoding="utf-8")
 
 
 # ---------------------------------------------------------------- 엑셀 리포트
-def write_excel(res, dir_a, dir_b, out_path, options):
+def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
     from openpyxl import Workbook
     from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
     from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.hyperlink import Hyperlink
 
     fill = {k: PatternFill("solid", fgColor=v) for k, v in {
         "header": "DDDDDD", "red": "FFEBE9", "green": "DAFBE1", "yellow": "FFF8C5",
@@ -431,28 +443,23 @@ def write_excel(res, dir_a, dir_b, out_path, options):
             [(p, "무시됨", None, None, "옵션으로 무시된 공백 차이", "gray") for p in res["ignored"]] +
             [(er["path"], "오류", None, None, er["detail"], "error") for er in res["errors"]] +
             [(p, "동일", None, None, "", None) for p in res["same"]])
+    # 변경 파일 경로를 HTML 리포트의 해당 diff로 링크 (엑셀 파일 기준 상대 경로)
+    link, ids = None, anchors(res)
+    if html_path:
+        try:
+            link = Path(os.path.relpath(Path(html_path).resolve(), Path(out_path).resolve().parent)).as_posix()
+        except ValueError:  # 드라이브가 다르면 절대 경로
+            link = Path(html_path).resolve().as_uri()
+    link_font = Font(name="Consolas", color="0563C1", underline="single")
     for r, (*values, color) in enumerate(rows, 2):
         for col, v in enumerate(values, 1):
-            put(ws, r, col, v, color if col == 2 else None)
+            put(ws, r, col, v, color if col == 2 else None, mono if col == 1 else None)
+        if link and values[0] in ids and values[1] == "변경":
+            cell = ws.cell(r, 1)
+            cell.hyperlink = Hyperlink(ref=cell.coordinate, target=link, location=ids[values[0]],
+                                       tooltip="HTML 리포트에서 변경 내용 보기")
+            cell.font = link_font
     ws.auto_filter.ref = f"A1:E{len(rows) + 1}"
-
-    # 변경 내용 (나란히 보기)
-    ws = wb.create_sheet("변경 내용")
-    header(ws, ["파일", "구분", "A 줄", "A 내용", "B 줄", "B 내용"], [40, 8, 7, 70, 7, 70])
-    label = {"equal": "", "delete": "삭제", "insert": "추가", "replace": "변경", "sep": "⋯"}
-    color_a = {"delete": "red", "replace": "yellow", "sep": "gray"}
-    color_b = {"insert": "green", "replace": "yellow", "sep": "gray"}
-    r = 2
-    for c in res["changed"]:
-        for kind, na, ta, nb, tb in diff_rows(c):
-            put(ws, r, 1, c["path"])
-            put(ws, r, 2, label[kind], color_a.get(kind) or color_b.get(kind))
-            put(ws, r, 3, na)
-            put(ws, r, 4, ta, color_a.get(kind), mono)
-            put(ws, r, 5, nb)
-            put(ws, r, 6, tb, color_b.get(kind), mono)
-            r += 1
-    ws.auto_filter.ref = f"A1:F{max(r - 1, 1)}"
 
     wb.save(out_path)
 
@@ -468,8 +475,10 @@ def main():
                     help="제외할 패턴 ('/'가 들어가면 상대 경로 전체와 비교)")
     ap.add_argument("-e", "--ext", nargs="+", metavar="EXT", help="비교할 확장자만 지정")
     ap.add_argument("-c", "--context", type=int, default=3, help="diff 앞뒤 줄 수 (기본 3)")
-    ap.add_argument("--html", metavar="FILE", help="HTML 리포트 저장 경로")
-    ap.add_argument("--excel", metavar="FILE", help="엑셀(.xlsx) 리포트 저장 경로")
+    ap.add_argument("-o", "--report", metavar="NAME",
+                    help="NAME.xlsx(파일 목록)와 NAME.html(변경 내용)을 함께 저장")
+    ap.add_argument("--html", metavar="FILE", help="HTML 리포트(변경 내용)만 저장")
+    ap.add_argument("--excel", metavar="FILE", help="엑셀 리포트(파일 목록)만 저장")
     ap.add_argument("--summary", action="store_true", help="요약만 출력")
     ap.add_argument("--no-color", action="store_true", help="콘솔 색상 끄기")
     args = ap.parse_args()
@@ -478,6 +487,15 @@ def main():
     for d in (dir_a, dir_b):
         if not d.is_dir():
             sys.exit(f"폴더를 찾을 수 없습니다: {d}")
+    if args.report:
+        base = args.report
+        if Path(base).suffix.lower() in (".html", ".xlsx"):
+            base = base[:-len(Path(base).suffix)]
+        args.html = args.html or base + ".html"
+        args.excel = args.excel or base + ".xlsx"
+    for out in (args.html, args.excel):
+        if out:
+            Path(out).resolve().parent.mkdir(parents=True, exist_ok=True)
     if args.excel:
         try:
             import openpyxl  # noqa: F401
@@ -497,7 +515,7 @@ def main():
         print(f"HTML 리포트 저장: {Path(args.html).resolve()}")
     if args.excel:
         options = " ".join(a for a in sys.argv[1:] if a not in (args.dir_a, args.dir_b)) or "(없음)"
-        write_excel(res, dir_a, dir_b, args.excel, options)
+        write_excel(res, dir_a, dir_b, args.excel, options, args.html)
         print(f"엑셀 리포트 저장: {Path(args.excel).resolve()}")
 
     # 차이가 있으면 종료 코드 1, 읽기 오류가 있으면 2 (CI·배치 스크립트에서 활용 가능)
