@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
 import folder_diff as fd  # noqa: E402
 
 
@@ -24,7 +24,7 @@ def ns(**kw):
 
 
 def run_script(script, *argv):
-    return subprocess.run([sys.executable, str(ROOT / script), *map(str, argv), "--no-color"],
+    return subprocess.run([sys.executable, str(ROOT / "tools" / script), *map(str, argv), "--no-color"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 

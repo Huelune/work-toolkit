@@ -6,11 +6,11 @@
 변경된 파일은 어느 줄이 어떻게 바뀌었는지 보여줍니다.
 
 사용 예:
-    python folder_diff.py 폴더A 폴더B
-    python folder_diff.py 폴더A 폴더B -o report      # report.xlsx + report.html
-    python folder_diff.py 폴더A 폴더B -w --exclude build "src/*.tmp"
-    python folder_diff.py 폴더A 폴더B --ext .py .c .h .m
-    python folder_diff.py 폴더A 폴더B -l 대상목록.xlsx -o report
+    python tools/folder_diff.py 폴더A 폴더B
+    python tools/folder_diff.py 폴더A 폴더B -o reports/report      # report.xlsx + report.html
+    python tools/folder_diff.py 폴더A 폴더B -w --exclude build "src/*.tmp"
+    python tools/folder_diff.py 폴더A 폴더B --ext .py .c .h .m
+    python tools/folder_diff.py 폴더A 폴더B -l 대상목록.xlsx -o reports/report
 
 옵션:
     -w, --ignore-whitespace   줄 앞뒤 공백/줄바꿈(CRLF·LF) 차이 무시

@@ -6,8 +6,8 @@ C 함수 단위 비교 도구 (func_diff.py)
 함수 순서가 바뀌어도 같은 함수끼리 비교하고, 함수 밖 코드(전역 변수·#define 등)는 '(함수 외)'로 묶어 비교합니다.
 
 사용 예:
-    python func_diff.py 폴더A 폴더B -l 목록.xlsx -o report   # 목록(파일명·함수명)에 있는 함수만
-    python func_diff.py 폴더A 폴더B -o report                # 모든 함수 + (함수 외)
+    python tools/func_diff.py 폴더A 폴더B -l 목록.xlsx -o reports/report   # 목록(파일명·함수명)에 있는 함수만
+    python tools/func_diff.py 폴더A 폴더B -o reports/report                # 모든 함수 + (함수 외)
 
 비교 대상 목록 (-l):
     .xlsx는 첫 시트 A열 = 파일명, B열 = 함수명 (파일명이 비어 있거나 병합 셀이면 위 파일명을 이어 씀)

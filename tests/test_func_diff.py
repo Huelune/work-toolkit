@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
 import func_diff as fdf  # noqa: E402
 
 
@@ -258,7 +258,7 @@ class CompareTest(TreeMixin, unittest.TestCase):
 
 
 def run_cli(*argv):
-    return subprocess.run([sys.executable, str(ROOT / "func_diff.py"), *map(str, argv), "--no-color"],
+    return subprocess.run([sys.executable, str(ROOT / "tools" / "func_diff.py"), *map(str, argv), "--no-color"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace",
                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})  # 파이프 stderr 인코딩을 고정
 
