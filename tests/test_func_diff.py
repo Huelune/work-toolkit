@@ -78,6 +78,16 @@ class ScannerTest(unittest.TestCase):
         src = 'void f(void) __attribute__((section(".x")))\n{\n}\nint g(int a) __declspec(noinline)\n{\n}\n'
         self.assertEqual(names(src), [("f", 1, 3), ("g", 4, 6)])
 
+    def test_directive_comment_then_continuation(self):
+        self.assertEqual(names("#define M(x) /* c */ \\\n  do { x } while(0)\nvoid f(void)\n{\n}\n"), [("f", 3, 5)])
+        self.assertEqual(names("#define M(x) /* c */ {\nvoid f(void)\n{\n}\n"), [("f", 2, 4)])
+
+    def test_comment_markers_inside_directive_strings(self):
+        src = ('#define S "/*"\nvoid f(void)\n{\n}\n'
+               '#endif // see /* x\nvoid g(void)\n{\n}\n'
+               '#include "a/*b"\nvoid h(void)\n{\n}\n')
+        self.assertEqual(names(src), [("f", 2, 4), ("g", 6, 8), ("h", 10, 12)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,27 +49,34 @@ def mask_c(text):
         if line_start and ch in " \t":
             i += 1
             continue
-        if line_start and ch == "#":  # 전처리 줄: '\'로 끝나면 다음 줄까지 이어짐
+        if line_start and ch == "#":  # 전처리 줄: 주석·문자열을 건너뛰며 논리적 줄 끝('\' 이어짐 포함)까지
             j = i
-            while True:
-                e = text.find("\n", j)
-                e = n if e < 0 else e
-                if e < n and text[j:e].rstrip().endswith("\\"):
-                    j = e + 1
-                    continue
-                break
-            # 전처리 줄이 /* 를 포함하면 */ 까지 확장
-            line_text = text[i:e]
-            comment_start = line_text.find("/*")
-            if comment_start >= 0:
-                comment_pos = i + comment_start
-                comment_end = text.find("*/", comment_pos + 2)
-                if comment_end >= 0:
-                    e = comment_end + 2
+            while j < n:
+                c = text[j]
+                if c == "\n":
+                    k = j - 1
+                    while k >= i and text[k] in " \t\r":
+                        k -= 1
+                    if k >= i and text[k] == "\\":
+                        j += 1
+                        continue
+                    break
+                if text.startswith("/*", j):
+                    e = text.find("*/", j + 2)
+                    j = n if e < 0 else e + 2
+                elif text.startswith("//", j):
+                    e = text.find("\n", j)
+                    j = n if e < 0 else e
+                elif c in "\"'":
+                    j += 1
+                    while j < n and text[j] != c and text[j] != "\n":
+                        j += 2 if text[j] == "\\" else 1
+                    j += 1
                 else:
-                    e = n
-            blank(i, e)
-            i = e
+                    j += 1
+            j = min(j, n)
+            blank(i, j)
+            i = j
             continue
         line_start = False
         if text.startswith("/*", i):
