@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""
+두 폴더 비교 도구 (folder_diff.py)
+ 
+같은 상대 경로(하위 폴더 포함)의 파일끼리 짝지어 비교하고,
+변경된 파일은 어느 줄이 어떻게 바뀌었는지 보여줍니다.
+ 
+사용 예:
+    python folder_diff.py 폴더A 폴더B
+    python folder_diff.py 폴더A 폴더B --html report.html
+    python folder_diff.py 폴더A 폴더B -w --exclude .git __pycache__ "*.pyc"
+    python folder_diff.py 폴더A 폴더B --ext .py .c .h .m
+ 
+옵션:
+    -w, --ignore-whitespace   줄 앞뒤 공백/줄바꿈(CRLF·LF) 차이 무시
+    -B, --ignore-blank-lines  빈 줄 차이 무시
+    -x, --exclude PATTERN...  제외할 파일/폴더 이름 패턴 (glob)
+    -e, --ext EXT...          지정한 확장자만 비교
+    -c, --context N           diff 앞뒤로 보여줄 줄 수 (기본 3)
+    --html FILE               나란히 비교하는 HTML 리포트 저장
+    --summary                 파일 목록 요약만 출력 (diff 내용 생략)
+    --no-color                콘솔 색상 끄기
+ 
+표준 라이브러리만 사용하므로 별도 설치가 필요 없습니다 (Python 3.8+).
+"""
+import argparse
+import codecs
+import difflib
+import fnmatch
+import hashlib
+import html
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+ 
+DEFAULT_EXCLUDES = [".git", ".svn", "__pycache__", ".idea", ".vscode", "*.pyc", "*.asv", "slprj"]
+ENCODINGS = ["utf-8-sig", "cp949", "euc-kr", "latin-1"]
+ 
+ 
+# ---------------------------------------------------------------- 파일 수집
+def is_excluded(rel: Path, patterns) -> bool:
+    return any(fnmatch.fnmatch(part, p) for part in rel.parts for p in patterns)
+ 
+ 
+def collect_files(root: Path, excludes, exts):
+    files = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_dir = Path(dirpath).relative_to(root)
+        # 제외 폴더는 하위로 내려가지 않음
+        dirnames[:] = [d for d in dirnames if not is_excluded(rel_dir / d, excludes)]
+        for name in filenames:
+            rel = rel_dir / name
+            if is_excluded(rel, excludes):
+                continue
+            if exts and Path(name).suffix.lower() not in exts:
+                continue
+            files[rel.as_posix()] = Path(dirpath) / name
+    return files
+ 
+ 
+# ---------------------------------------------------------------- 파일 읽기
+def file_hash(path: Path) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+ 
+ 
+def is_binary(path: Path) -> bool:
+    with open(path, "rb") as f:
+        return b"\x00" in f.read(8192)
+ 
+ 
+def read_lines(path: Path):
+    """줄 목록과 파일 형식 정보(줄바꿈·인코딩·BOM·끝 줄바꿈)를 반환"""
+    data = path.read_bytes()
+    for enc in ENCODINGS:
+        try:
+            text = data.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        text, enc = data.decode("utf-8", errors="replace"), "utf-8(replace)"
+    crlf = data.count(b"\r\n")
+    lf = data.count(b"\n") - crlf
+    eol = "CRLF" if crlf and not lf else "LF" if lf and not crlf else "혼합" if crlf else "없음"
+    fmt = {"줄바꿈": eol,
+           "인코딩": enc.replace("utf-8-sig", "utf-8"),  # BOM 여부는 따로 표시
+           "BOM": "있음" if data.startswith(codecs.BOM_UTF8) else "없음",
+           "끝 줄바꿈": "있음" if data.endswith(b"\n") else "없음"}
+    return text.splitlines(), fmt
+ 
+ 
+def normalize(lines, ignore_ws, ignore_blank):
+    out = [l.strip() if ignore_ws else l.rstrip("\r") for l in lines]
+    if ignore_blank:
+        out = [l for l in out if l.strip()]
+    return out
+ 
+ 
+# ---------------------------------------------------------------- 비교
+def compare(dir_a: Path, dir_b: Path, args):
+    excludes = DEFAULT_EXCLUDES + (args.exclude or [])
+    exts = {e.lower() if e.startswith(".") else "." + e.lower() for e in (args.ext or [])}
+    fa = collect_files(dir_a, excludes, exts)
+    fb = collect_files(dir_b, excludes, exts)
+ 
+    result = {"only_a": sorted(set(fa) - set(fb)),
+              "only_b": sorted(set(fb) - set(fa)),
+              "same": [], "changed": [], "binary_changed": [],
+              "format_changed": [],  # 내용은 같고 줄바꿈/인코딩/BOM 등 형식만 다름
+              "ignored": []}         # -w/-B 옵션으로 무시된 공백 차이만 있음
+ 
+    for rel in sorted(set(fa) & set(fb)):
+        pa, pb = fa[rel], fb[rel]
+        if pa.stat().st_size == pb.stat().st_size and file_hash(pa) == file_hash(pb):
+            result["same"].append(rel)
+            continue
+        if is_binary(pa) or is_binary(pb):
+            result["binary_changed"].append(rel)
+            continue
+        la, fmt_a = read_lines(pa)
+        lb, fmt_b = read_lines(pb)
+        na = normalize(la, args.ignore_whitespace, args.ignore_blank_lines)
+        nb = normalize(lb, args.ignore_whitespace, args.ignore_blank_lines)
+        if na == nb:  # 줄 내용은 같은데 바이트가 다른 경우
+            ws_keys = ("줄바꿈", "끝 줄바꿈") if args.ignore_whitespace else ()
+            detail = [f"{k} {fmt_a[k]}→{fmt_b[k]}" for k in fmt_a
+                      if fmt_a[k] != fmt_b[k] and k not in ws_keys]
+            if detail:
+                result["format_changed"].append({"path": rel, "detail": ", ".join(detail)})
+            else:
+                result["ignored"].append(rel)
+            continue
+        diff = list(difflib.unified_diff(na, nb, f"A/{rel}", f"B/{rel}",
+                                         n=args.context, lineterm=""))
+        added = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+        removed = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+        result["changed"].append({"path": rel, "diff": diff, "added": added,
+                                  "removed": removed, "a": na, "b": nb})
+    return result
+ 
+ 
+# ---------------------------------------------------------------- 콘솔 출력
+class C:
+    RED = GREEN = YELLOW = CYAN = BOLD = RESET = ""
+ 
+ 
+def enable_color():
+    if os.name == "nt":
+        os.system("")  # Windows 10+ 콘솔에서 ANSI 색상 활성화
+    C.RED, C.GREEN, C.YELLOW, C.CYAN = "\033[31m", "\033[32m", "\033[33m", "\033[36m"
+    C.BOLD, C.RESET = "\033[1m", "\033[0m"
+ 
+ 
+def count_changed(res):
+    return len(res["changed"]) + len(res["format_changed"]) + len(res["binary_changed"])
+
+
+def print_report(res, dir_a, dir_b, summary_only):
+    line = "=" * 70
+    print(f"{C.BOLD}{line}\n 폴더 비교\n  A: {dir_a}\n  B: {dir_b}\n{line}{C.RESET}")
+    ignored = f"  |  무시됨: {len(res['ignored'])}" if res["ignored"] else ""
+    print(f"  동일: {len(res['same'])}  |  변경: {count_changed(res)}"
+          f"  |  A에만: {len(res['only_a'])}  |  B에만: {len(res['only_b'])}{ignored}\n")
+ 
+    if res["only_a"]:
+        print(f"{C.BOLD}[A에만 있는 파일]{C.RESET}")
+        for p in res["only_a"]:
+            print(f"  {C.RED}- {p}{C.RESET}")
+        print()
+    if res["only_b"]:
+        print(f"{C.BOLD}[B에만 있는 파일]{C.RESET}")
+        for p in res["only_b"]:
+            print(f"  {C.GREEN}+ {p}{C.RESET}")
+        print()
+    if count_changed(res):
+        print(f"{C.BOLD}[변경된 파일]{C.RESET}")
+        for c in res["changed"]:
+            print(f"  {C.YELLOW}* {c['path']}{C.RESET}  ({C.GREEN}+{c['added']}{C.RESET} / {C.RED}-{c['removed']}{C.RESET})")
+        for c in res["format_changed"]:
+            print(f"  {C.YELLOW}* {c['path']}{C.RESET}  (형식만 다름: {c['detail']})")
+        for p in res["binary_changed"]:
+            print(f"  {C.YELLOW}* {p}{C.RESET}  (바이너리 파일 - 내용 다름)")
+        print()
+    if res["ignored"]:
+        print(f"{C.BOLD}[공백 차이만 있는 파일 (옵션으로 무시됨)]{C.RESET}")
+        for p in res["ignored"]:
+            print(f"  {C.CYAN}~ {p}{C.RESET}")
+        print()
+ 
+    if summary_only:
+        return
+    for c in res["changed"]:
+        print(f"{C.BOLD}{'-' * 70}\n {c['path']}\n{'-' * 70}{C.RESET}")
+        for l in c["diff"]:
+            if l.startswith("+++") or l.startswith("---"):
+                print(f"{C.BOLD}{l}{C.RESET}")
+            elif l.startswith("@@"):
+                print(f"{C.CYAN}{l}{C.RESET}")
+            elif l.startswith("+"):
+                print(f"{C.GREEN}{l}{C.RESET}")
+            elif l.startswith("-"):
+                print(f"{C.RED}{l}{C.RESET}")
+            else:
+                print(l)
+        print()
+ 
+ 
+# ---------------------------------------------------------------- HTML 리포트
+HTML_CSS = """
+body{font-family:'Segoe UI','Malgun Gothic',sans-serif;margin:24px;color:#222}
+h1{font-size:20px} h2{font-size:16px;margin-top:28px;border-bottom:1px solid #ccc;padding-bottom:4px}
+.sum span{display:inline-block;margin-right:16px;padding:4px 10px;border-radius:4px;background:#f0f0f0}
+ul{font-family:Consolas,monospace;font-size:13px} .add{color:#1a7f37} .del{color:#cf222e}
+details{margin:10px 0;border:1px solid #ddd;border-radius:4px} summary{cursor:pointer;padding:6px 10px;background:#f6f8fa;font-family:Consolas,monospace}
+table.diff{font-family:Consolas,monospace;font-size:12px;border-collapse:collapse;width:100%}
+table.diff td{padding:0 4px;vertical-align:top;white-space:pre-wrap;word-break:break-all}
+.diff_header{background:#eee;color:#888;text-align:right} td.diff_next{display:none}
+.diff_add{background:#dafbe1} .diff_chg{background:#fff3b0} .diff_sub{background:#ffebe9}
+"""
+ 
+ 
+def write_html(res, dir_a, dir_b, out_path, context):
+    hd = difflib.HtmlDiff(tabsize=4, wrapcolumn=100)
+    e = html.escape
+    parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>폴더 비교 리포트</title>"
+             f"<style>{HTML_CSS}</style></head><body>",
+             f"<h1>폴더 비교 리포트</h1><p>A: <code>{e(str(dir_a))}</code><br>B: <code>{e(str(dir_b))}</code><br>"
+             f"생성: {datetime.now():%Y-%m-%d %H:%M}</p>",
+             f"<div class='sum'><span>동일 {len(res['same'])}</span>"
+             f"<span>변경 {count_changed(res)}</span>"
+             f"<span class='del'>A에만 {len(res['only_a'])}</span>"
+             f"<span class='add'>B에만 {len(res['only_b'])}</span>"
+             f"<span>무시됨 {len(res['ignored'])}</span></div>"]
+ 
+    if res["only_a"]:
+        parts.append("<h2>A에만 있는 파일</h2><ul>" +
+                     "".join(f"<li class='del'>{e(p)}</li>" for p in res["only_a"]) + "</ul>")
+    if res["only_b"]:
+        parts.append("<h2>B에만 있는 파일</h2><ul>" +
+                     "".join(f"<li class='add'>{e(p)}</li>" for p in res["only_b"]) + "</ul>")
+    if res["format_changed"]:
+        parts.append("<h2>형식만 다른 파일 (줄바꿈/인코딩/BOM)</h2><ul>" +
+                     "".join(f"<li>{e(c['path'])} — {e(c['detail'])}</li>" for c in res["format_changed"]) + "</ul>")
+    if res["ignored"]:
+        parts.append("<h2>공백 차이만 있는 파일 (옵션으로 무시됨)</h2><ul>" +
+                     "".join(f"<li>{e(p)}</li>" for p in res["ignored"]) + "</ul>")
+    if res["binary_changed"]:
+        parts.append("<h2>변경된 바이너리 파일</h2><ul>" +
+                     "".join(f"<li>{e(p)}</li>" for p in res["binary_changed"]) + "</ul>")
+    if res["changed"]:
+        parts.append("<h2>변경된 파일 (클릭하여 펼치기)</h2>")
+        for c in res["changed"]:
+            table = hd.make_table(c["a"], c["b"], "A", "B", context=True, numlines=context)
+            parts.append(f"<details><summary>{e(c['path'])} "
+                         f"<span class='add'>+{c['added']}</span> <span class='del'>-{c['removed']}</span>"
+                         f"</summary>{table}</details>")
+    parts.append("</body></html>")
+    Path(out_path).write_text("\n".join(parts), encoding="utf-8")
+ 
+ 
+# ---------------------------------------------------------------- main
+def main():
+    ap = argparse.ArgumentParser(description="두 폴더의 코드를 같은 파일 이름(상대 경로) 기준으로 비교합니다.")
+    ap.add_argument("dir_a", help="기준 폴더 (A)")
+    ap.add_argument("dir_b", help="비교 폴더 (B)")
+    ap.add_argument("-w", "--ignore-whitespace", action="store_true", help="줄 앞뒤 공백 차이 무시")
+    ap.add_argument("-B", "--ignore-blank-lines", action="store_true", help="빈 줄 차이 무시")
+    ap.add_argument("-x", "--exclude", nargs="+", metavar="PATTERN", help="제외할 이름 패턴")
+    ap.add_argument("-e", "--ext", nargs="+", metavar="EXT", help="비교할 확장자만 지정")
+    ap.add_argument("-c", "--context", type=int, default=3, help="diff 앞뒤 줄 수 (기본 3)")
+    ap.add_argument("--html", metavar="FILE", help="HTML 리포트 저장 경로")
+    ap.add_argument("--summary", action="store_true", help="요약만 출력")
+    ap.add_argument("--no-color", action="store_true", help="콘솔 색상 끄기")
+    args = ap.parse_args()
+ 
+    dir_a, dir_b = Path(args.dir_a).resolve(), Path(args.dir_b).resolve()
+    for d in (dir_a, dir_b):
+        if not d.is_dir():
+            sys.exit(f"폴더를 찾을 수 없습니다: {d}")
+ 
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if not args.no_color and sys.stdout.isatty():
+        enable_color()
+ 
+    res = compare(dir_a, dir_b, args)
+    print_report(res, dir_a, dir_b, args.summary)
+ 
+    if args.html:
+        write_html(res, dir_a, dir_b, args.html, args.context)
+        print(f"HTML 리포트 저장: {Path(args.html).resolve()}")
+ 
+    # 차이가 있으면 종료 코드 1 (CI·배치 스크립트에서 활용 가능)
+    has_diff = any(res[k] for k in ("only_a", "only_b", "changed", "format_changed", "binary_changed"))
+    sys.exit(1 if has_diff else 0)
+ 
+ 
+if __name__ == "__main__":
+    main()
