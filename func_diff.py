@@ -58,6 +58,16 @@ def mask_c(text):
                     j = e + 1
                     continue
                 break
+            # 전처리 줄이 /* 를 포함하면 */ 까지 확장
+            line_text = text[i:e]
+            comment_start = line_text.find("/*")
+            if comment_start >= 0:
+                comment_pos = i + comment_start
+                comment_end = text.find("*/", comment_pos + 2)
+                if comment_end >= 0:
+                    e = comment_end + 2
+                else:
+                    e = n
             blank(i, e)
             i = e
             continue
@@ -87,6 +97,36 @@ def mask_c(text):
 def func_name(header):
     """최상위 '{' 앞의 선언부(가려진 텍스트)가 함수 정의면 함수 이름, 아니면 None"""
     h = header.rstrip()
+
+    # 뒤에 붙은 __attribute__(…) 또는 __declspec(…) 제거
+    while True:
+        if not h.endswith(")"):
+            return None
+        # 마지막 ) 앞의 ( 찾기
+        depth = 0
+        for k in range(len(h) - 1, -1, -1):
+            if h[k] == ")":
+                depth += 1
+            elif h[k] == "(":
+                depth -= 1
+                if depth == 0:
+                    break
+        else:
+            return None
+        # k부터 len(h)까지가 마지막 (...) 그룹
+        paren_group = h[k:len(h)]
+        rest = h[:k].rstrip()
+        # rest의 끝이 __attribute__ 또는 __declspec인지 확인
+        if rest.endswith("__attribute__") or rest.endswith("__declspec"):
+            # 그 부분을 제거
+            if rest.endswith("__attribute__"):
+                h = rest[:-len("__attribute__")].rstrip()
+            else:
+                h = rest[:-len("__declspec")].rstrip()
+            continue
+        # 더 이상 제거할 것이 없으면 나감
+        break
+
     if not h.endswith(")"):
         return None
     depth = 0

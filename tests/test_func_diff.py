@@ -70,6 +70,14 @@ class ScannerTest(unittest.TestCase):
         self.assertEqual(u["f"], [2, 3])
         self.assertEqual(u["f#2"], [5, 6])
 
+    def test_comment_continues_from_directive(self):
+        src = "#define X 1 /* a\n b */\nvoid f(void)\n{\n}\n"
+        self.assertEqual(names(src), [("f", 3, 5)])
+
+    def test_trailing_attribute(self):
+        src = 'void f(void) __attribute__((section(".x")))\n{\n}\nint g(int a) __declspec(noinline)\n{\n}\n'
+        self.assertEqual(names(src), [("f", 1, 3), ("g", 4, 6)])
+
 
 if __name__ == "__main__":
     unittest.main()
