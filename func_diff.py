@@ -12,7 +12,8 @@ C 함수 단위 비교 도구 (func_diff.py)
 비교 대상 목록 (-l):
     .xlsx는 첫 시트 A열 = 파일명, B열 = 함수명 (파일명이 비어 있거나 병합 셀이면 위 파일명을 이어 씀)
     텍스트는 한 줄에 '파일명,함수명' (탭도 가능, #은 주석)
-    함수명이 비어 있으면 그 파일의 모든 함수, '(함수 외)'는 함수 밖 영역
+    함수명이 비어 있으면 그 파일의 모든 함수('(함수 외)' 제외), '(함수 외)'는 함수 밖 영역(명시한 경우에만 포함)
+    같은 이름 함수가 여러 개면 'f'는 모두, 'f#2'는 두 번째 함수만
 
 그 밖의 옵션(-w -B -x -e -c -o --html --excel --summary --no-color)은 folder_diff.py와 같습니다.
 종료 코드: 0 = 차이 없음, 1 = 차이 있음, 2 = 읽기 오류 또는 분석 불가 파일 있음
@@ -32,6 +33,7 @@ FUNC_OUTSIDE = "(함수 외)"   # 함수에 속하지 않는 줄을 묶은 단�
 WHOLE_FILE = "(파일 전체)"   # 분석 불가 파일이나 목록의 '모든 함수' 항목
 NOT_FUNC_NAMES = {"__attribute__", "__declspec", "if", "while", "for", "switch", "sizeof", "return"}
 IDENT_END = re.compile(r"([A-Za-z_]\w*)\s*$")
+ALL_CAPS = re.compile(r"[A-Z_][A-Z0-9_]*")
 
 
 # ---------------------------------------------------------------- C 스캐너
@@ -160,6 +162,10 @@ def func_name(header):
     m = IDENT_END.search(h[:k])
     if not m or m.group(1) in NOT_FUNC_NAMES:
         return None
+    if ALL_CAPS.fullmatch(h[:k].strip()):  # TASK(T10ms), ISR(Can_Isr): 리턴 타입 없는 OS 매크로면 괄호 안이 이름
+        inner = re.fullmatch(r"\(\s*([A-Za-z_]\w*)\s*\)", h[k:])
+        if inner:
+            return inner.group(1)
     return m.group(1)
 
 
@@ -213,13 +219,17 @@ FUNC_HEADERS = {"함수", "함수명", "함수 이름", "함수이름", "functio
 def load_func_list(path):
     """목록 파일 → {파일 항목: 함수명 집합 또는 None(그 파일의 모든 함수)} (목록 순서 유지)"""
     plan, cur = {}, None
-    for k, (f, fn) in enumerate(fd.read_rows(path, 2)):
+    first = True  # 아직 비어 있지 않은 행을 못 봄
+    for f, fn in fd.read_rows(path, 2):
         f = "" if f is None else str(f).strip()
         fn = "" if fn is None else str(fn).strip()
-        if k == 0 and (f.casefold() in fd.TARGET_HEADERS or fn.casefold() in FUNC_HEADERS):
-            continue  # 제목 행
+        if not (f or fn):
+            continue
+        was_first, first = first, False
+        if was_first and (f.casefold() in fd.TARGET_HEADERS or fn.casefold() in FUNC_HEADERS):
+            continue  # 제목 행 (처음 나오는 비어 있지 않은 행)
         cur = f or cur  # 파일명이 비어 있거나 병합 셀이면 위 파일명을 이어 씀
-        if not cur or not (f or fn):
+        if not cur:
             continue
         if fn.replace(" ", "") in ("(함수외)", "함수외"):
             fn = FUNC_OUTSIDE
@@ -244,27 +254,30 @@ def make_row(file, func, status, a_range="", b_range="", diff=None, note=""):
 
 
 def read_side(path, args):
-    """파일 한쪽을 읽어 (split_units 결과, normalize 결과) 반환. 파일이 없으면 None"""
+    """파일 한쪽을 읽어 (split_units 결과, normalize 결과, {줄 번호: normalize 항목}) 반환. 파일이 없으면 None"""
     if path is None:
         return None
     lines, _ = fd.decode_lines(path.read_bytes())
-    return split_units(lines), fd.normalize(lines, args.ignore_whitespace, args.ignore_blank_lines)
+    norm = fd.normalize(lines, args.ignore_whitespace, args.ignore_blank_lines)
+    return split_units(lines), norm, {x[0]: x for x in norm}
 
 
 def pick(side, nums):
-    """normalize 결과에서 nums 줄만 골라냄 (-B로 빠진 빈 줄은 이미 제외됨)"""
+    """nums 줄만 골라냄 (-B로 빠진 빈 줄은 색인에 없으므로 제외됨)"""
     if side is None or nums is None:
         return []
-    keep = set(nums)
-    return [x for x in side[1] if x[0] in keep]
+    idx = side[2]
+    return [idx[n] for n in nums if n in idx]
 
 
 def line_range(name, nums):
     return f"{nums[0]}-{nums[-1]}" if nums and name != FUNC_OUTSIDE else ""
 
 
-def compare_c_file(rel, pa, pb, wanted, args, rows):
-    """C 파일 한 쌍을 함수 단위로 비교해 rows에 결과 행을 추가. wanted: None(전부) 또는 함수명 집합"""
+def compare_c_file(rel, pa, pb, wanted, args, rows, all_funcs=False):
+    """C 파일 한 쌍을 함수 단위로 비교해 rows에 결과 행을 추가. wanted: None(전부, (함수 외) 포함) 또는
+    함수명 집합('f#2'처럼 번호 붙은 이름도 가능). all_funcs: 목록의 '모든 함수' 항목 -
+    (함수 외)는 wanted에 명시한 경우에만 포함"""
     sa, sb = read_side(pa, args), read_side(pb, args)
     broken = [s for s, side in (("A", sa), ("B", sb)) if side and side[0] is None]
     if broken:  # 중괄호 짝이 안 맞으면 파일 전체 diff로 대체
@@ -275,7 +288,8 @@ def compare_c_file(rel, pa, pb, wanted, args, rows):
     ua, ub = (sa[0] if sa else {}), (sb[0] if sb else {})
     names = list(ua) + [k for k in ub if k not in ua]
     if wanted is not None:
-        names = [k for k in names if k.split("#")[0] in wanted]
+        names = [k for k in names
+                 if (all_funcs and k != FUNC_OUTSIDE) or k in wanted or k.split("#")[0] in wanted]
     for name in names:
         la, lb = ua.get(name), ub.get(name)
         na, nb = pick(sa, la), pick(sb, lb)
@@ -288,7 +302,7 @@ def compare_c_file(rel, pa, pb, wanted, args, rows):
             status = ONLY_A if la is not None else ONLY_B
         rows.append(make_row(rel, name, status, line_range(name, la), line_range(name, lb), d))
     if wanted is not None:
-        found = {k.split("#")[0] for k in names}
+        found = set(names) | {k.split("#")[0] for k in names}
         for fn in sorted(wanted - found):
             rows.append(make_row(rel, fn, NO_FUNC, note="A·B 양쪽 파일 모두에 없음 (함수명은 대소문자 구분)"))
 
@@ -301,7 +315,7 @@ def compare_funcs(dir_a, dir_b, args, plan=None):
     fa = fd.collect_files(dir_a, excludes, exts, errors)
     fb = fd.collect_files(dir_b, excludes, exts, errors)
     if plan is None:
-        targets = {rel: None for rel in set(fa) | set(fb)}
+        targets = {rel: (None, False) for rel in set(fa) | set(fb)}
     else:
         targets, every = {}, set(fa) | set(fb)
         for entry, funcs in plan.items():
@@ -311,11 +325,14 @@ def compare_funcs(dir_a, dir_b, args, plan=None):
                     rows.append(make_row(entry, fn, NO_FILE, note="A·B 양쪽 폴더 모두에 없음"))
                 continue
             for rel in hits:  # 같은 파일이 목록에 여러 번 나오면 함수 집합을 합침
-                prev = targets.get(rel, set())
-                targets[rel] = None if funcs is None or prev is None else prev | funcs
+                prev, every_func = targets.get(rel, (set(), False))
+                targets[rel] = (prev | (funcs or set()), every_func or funcs is None)
     for rel in sorted(targets):
+        wanted, all_funcs = targets[rel]
+        if all_funcs:  # 모든 함수가 대상이면 개별 함수명은 의미 없고 (함수 외)만 따로 판단
+            wanted = wanted & {FUNC_OUTSIDE}
         try:
-            compare_c_file(rel, fa.get(rel), fb.get(rel), targets[rel], args, rows)
+            compare_c_file(rel, fa.get(rel), fb.get(rel), wanted, args, rows, all_funcs)
         except OSError as ex:
             errors.append({"path": rel, "detail": f"파일 읽기 실패: {ex.strerror or ex}"})
     return {"rows": rows, "errors": errors}

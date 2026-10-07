@@ -123,6 +123,12 @@ class ScannerTest(unittest.TestCase):
         src = 'void f(void) __attribute__((section(".x")))\n{\n}\nint g(int a) __declspec(noinline)\n{\n}\n'
         self.assertEqual(names(src), [("f", 1, 3), ("g", 4, 6)])
 
+    def test_osek_task_isr_macros(self):
+        self.assertEqual(names("TASK(T10ms)\n{\n}\nISR(Can_Isr) {\n}\nTASK(T20ms)\n{\n}\n"),
+                         [("T10ms", 1, 3), ("Can_Isr", 4, 5), ("T20ms", 6, 8)])
+        self.assertEqual(names("void ISR(void)\n{\n}\nmain(void)\n{\n}\n"), [("ISR", 1, 3), ("main", 4, 6)])
+        self.assertEqual(names("FUNC(void, CODE) Rte_Foo(void)\n{\n}\n"), [("Rte_Foo", 1, 3)])
+
     def test_directive_comment_then_continuation(self):
         self.assertEqual(names("#define M(x) /* c */ \\\n  do { x } while(0)\nvoid f(void)\n{\n}\n"), [("f", 3, 5)])
         self.assertEqual(names("#define M(x) /* c */ {\nvoid f(void)\n{\n}\n"), [("f", 2, 4)])
@@ -160,6 +166,17 @@ class ListTest(unittest.TestCase):
             "motor.c": {"Motor_Init", "Motor_Step", "Motor_Stop"},
             "sensor.c": {"Sensor_Read", fdf.FUNC_OUTSIDE},
             "util.c": None})
+
+    def test_excel_header_after_blank_first_row(self):
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append([None, None])
+        ws.append(["파일명", "함수명"])
+        ws.append(["motor.c", "Motor_Init"])
+        p = Path(self.tmp.name, "list.xlsx")
+        wb.save(p)
+        self.assertEqual(fdf.load_func_list(p), {"motor.c": {"Motor_Init"}})
 
     def test_text_layout(self):
         p = Path(self.tmp.name, "list.txt")
@@ -204,6 +221,33 @@ class CompareTest(TreeMixin, unittest.TestCase):
             ("src/motor.c", "Motor_Old", fdf.ONLY_A),
             ("src/motor.c", "Motor_New", fdf.ONLY_B),
             ("src/motor.c", "motor_init", fdf.NO_FUNC)])
+
+    def test_numbered_entry_in_list(self):
+        self.assertEqual(self.result({"dup.c": {"f#2"}}), [("dup.c", "f#2", fdf.SAME)])
+        self.assertEqual(self.result({"dup.c": {"f", "f#2"}}),
+                         [("dup.c", "f", fdf.SAME), ("dup.c", "f#2", fdf.SAME)])
+
+    def test_blank_function_cell_excludes_outside(self):
+        funcs = [("src/motor.c", f, s) for f, s in (("Motor_Init", fdf.CHANGED), ("Motor_Step", fdf.SAME),
+                                                     ("Motor_Old", fdf.ONLY_A), ("Motor_New", fdf.ONLY_B))]
+        self.assertEqual(self.result({"src/motor.c": None}), funcs)
+        outside = [("src/motor.c", fdf.FUNC_OUTSIDE, fdf.CHANGED)]
+        self.assertEqual(self.result({"motor.c": None, "Motor.c": {fdf.FUNC_OUTSIDE}}), outside + funcs)
+        self.assertEqual(self.result({"Motor.c": {fdf.FUNC_OUTSIDE}, "motor.c": None}), outside + funcs)
+
+    def test_many_functions_is_fast(self):
+        import time
+        n = 6000
+        body = "".join("void f%d(void)\n{\n  x = %d;\n}\n" % (i, i) for i in range(n))
+        make_tree(self.a, {"big/big.c": body})
+        make_tree(self.b, {"big/big.c": body.replace("x = 7;", "x = 8;").replace("x = 1234;", "x = 0;")})
+        t = time.perf_counter()
+        res = fdf.compare_funcs(self.a / "big", self.b / "big", ns())
+        elapsed = time.perf_counter() - t
+        print(f"[perf] {n} functions: {elapsed:.2f}s")
+        self.assertEqual(len(res["rows"]), n)
+        self.assertEqual(sum(r["status"] == fdf.CHANGED for r in res["rows"]), 2)
+        self.assertLess(elapsed, 3.0)
 
     def test_ignore_whitespace(self):
         make_tree(self.a, {"w.c": "void f(void)\n{\n  x();\n}\n"})
