@@ -2,12 +2,13 @@
 """
 C 함수 단위 비교 도구 (func_diff.py)
 
-두 폴더에서 같은 상대 경로의 .c 파일끼리 짝지은 뒤, 파일 안의 함수를 이름으로 짝지어 비교합니다.
+이전 버전과 현재 버전 폴더에서 같은 상대 경로의 .c 파일끼리 짝지은 뒤, 파일 안의 함수를 이름으로 짝지어
+어떤 함수가 추가·삭제·변경되었는지 보여줍니다.
 함수 순서가 바뀌어도 같은 함수끼리 비교하고, 함수 밖 코드(전역 변수·#define 등)는 '(함수 외)'로 묶어 비교합니다.
 
 사용 예:
-    python tools/func_diff.py 폴더A 폴더B -l 목록.xlsx -o reports/report   # 목록(파일명·함수명)에 있는 함수만
-    python tools/func_diff.py 폴더A 폴더B -o reports/report                # 모든 함수 + (함수 외)
+    python tools/func_diff.py 이전폴더 현재폴더 -l 목록.xlsx -o reports/report   # 목록(파일명·함수명)에 있는 함수만
+    python tools/func_diff.py 이전폴더 현재폴더 -o reports/report                # 모든 함수 + (함수 외)
 
 비교 대상 목록 (-l):
     .xlsx는 첫 시트 A열 = 파일명, B열 = 함수명 (파일명이 비어 있거나 병합 셀이면 위 파일명을 이어 씀)
@@ -243,8 +244,8 @@ def load_func_list(path):
 
 
 # ---------------------------------------------------------------- 함수 단위 비교
-SAME, CHANGED, ONLY_A, ONLY_B = "동일", "변경", "A에만", "B에만"
-NO_FUNC, NO_FILE, BROKEN = "함수 없음", "파일 없음", "분석 불가"
+SAME, CHANGED, DELETED, ADDED = "동일", "변경", "삭제", "추가"
+NO_FUNC, NO_FILE, BROKEN = "함수를 찾을 수 없음", "파일을 찾을 수 없음", "분석 불가"
 
 
 def make_row(file, func, status, a_range="", b_range="", diff=None, note=""):
@@ -279,7 +280,7 @@ def compare_c_file(rel, pa, pb, wanted, args, rows, all_funcs=False):
     함수명 집합('f#2'처럼 번호 붙은 이름도 가능). all_funcs: 목록의 '모든 함수' 항목 -
     (함수 외)는 wanted에 명시한 경우에만 포함"""
     sa, sb = read_side(pa, args), read_side(pb, args)
-    broken = [s for s, side in (("A", sa), ("B", sb)) if side and side[0] is None]
+    broken = [s for s, side in (("이전", sa), ("현재", sb)) if side and side[0] is None]
     if broken:  # 중괄호 짝이 안 맞으면 파일 전체 diff로 대체
         d = fd.line_diff(sa[1] if sa else [], sb[1] if sb else [], args.context)
         rows.append(make_row(rel, WHOLE_FILE, BROKEN, diff=d,
@@ -298,13 +299,13 @@ def compare_c_file(rel, pa, pb, wanted, args, rows, all_funcs=False):
         d = fd.line_diff(na, nb, args.context)
         if la is not None and lb is not None:
             status = CHANGED if d else SAME
-        else:  # 한쪽에만 있으면 본문 전체가 삭제/추가로 보임
-            status = ONLY_A if la is not None else ONLY_B
+        else:  # 이전에만 있으면 삭제, 현재에만 있으면 추가 (본문 전체가 diff로 보임)
+            status = DELETED if la is not None else ADDED
         rows.append(make_row(rel, name, status, line_range(name, la), line_range(name, lb), d))
     if wanted is not None:
         found = set(names) | {k.split("#")[0] for k in names}
         for fn in sorted(wanted - found):
-            rows.append(make_row(rel, fn, NO_FUNC, note="A·B 양쪽 파일 모두에 없음 (함수명은 대소문자 구분)"))
+            rows.append(make_row(rel, fn, NO_FUNC, note="이전·현재 버전 파일 모두에 없음 (함수명은 대소문자 구분)"))
 
 
 def compare_funcs(dir_a, dir_b, args, plan=None):
@@ -322,7 +323,7 @@ def compare_funcs(dir_a, dir_b, args, plan=None):
             hits, _ = fd.match_targets(every, [entry])
             if not hits:
                 for fn in (sorted(funcs) if funcs else [WHOLE_FILE]):
-                    rows.append(make_row(entry, fn, NO_FILE, note="A·B 양쪽 폴더 모두에 없음"))
+                    rows.append(make_row(entry, fn, NO_FILE, note="이전·현재 버전 폴더 모두에 없음"))
                 continue
             for rel in hits:  # 같은 파일이 목록에 여러 번 나오면 함수 집합을 합침
                 prev, every_func = targets.get(rel, (set(), False))
@@ -339,8 +340,8 @@ def compare_funcs(dir_a, dir_b, args, plan=None):
 
 
 # ---------------------------------------------------------------- 출력
-STATUS_ORDER = [CHANGED, ONLY_A, ONLY_B, NO_FUNC, NO_FILE, BROKEN, SAME]
-STATUS_FILL = {CHANGED: "yellow", ONLY_A: "red", ONLY_B: "green",
+STATUS_ORDER = [ADDED, DELETED, CHANGED, SAME, NO_FUNC, NO_FILE, BROKEN]
+STATUS_FILL = {CHANGED: "yellow", DELETED: "red", ADDED: "green",
                NO_FUNC: "error", NO_FILE: "error", BROKEN: "error", SAME: None}
 
 
@@ -354,13 +355,13 @@ def counts(res):
 def print_report(res, dir_a, dir_b, summary_only):
     C = fd.C
     line = "=" * 70
-    print(f"{C.BOLD}{line}\n 함수 비교\n  A: {dir_a}\n  B: {dir_b}\n{line}{C.RESET}")
-    summary = [f"{s}: {n}" for s, n in counts(res).items() if n or s in (CHANGED, SAME)]
+    print(f"{C.BOLD}{line}\n 함수 변경 비교\n  이전: {dir_a}\n  현재: {dir_b}\n{line}{C.RESET}")
+    summary = [f"{s}: {n}" for s, n in counts(res).items() if n or s in (ADDED, DELETED, CHANGED, SAME)]
     errors = f"  |  {C.RED}오류: {len(res['errors'])}{C.RESET}" if res["errors"] else ""
     print("  " + "  |  ".join(summary) + errors + "\n")
     for er in res["errors"]:
         print(f"  {C.RED}! {er['path']}{C.RESET}  ({er['detail']})")
-    color = {CHANGED: C.YELLOW, ONLY_A: C.RED, ONLY_B: C.GREEN,
+    color = {CHANGED: C.YELLOW, DELETED: C.RED, ADDED: C.GREEN,
              NO_FUNC: C.RED, NO_FILE: C.RED, BROKEN: C.RED, SAME: ""}
     current = None
     for r in res["rows"]:
@@ -382,11 +383,13 @@ def print_report(res, dir_a, dir_b, summary_only):
 
 def write_html(res, dir_a, dir_b, out_path):
     e = html.escape
-    parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>함수 비교 리포트</title>"
+    parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>함수 변경 리포트</title>"
              f"<style>{fd.HTML_CSS}</style></head><body>",
-             f"<h1>함수 비교 리포트</h1><p>A: <code>{e(str(dir_a))}</code><br>B: <code>{e(str(dir_b))}</code><br>"
+             f"<h1>함수 변경 리포트</h1><p>이전: <code>{e(str(dir_a))}</code><br>현재: <code>{e(str(dir_b))}</code><br>"
              f"생성: {datetime.now():%Y-%m-%d %H:%M}</p>",
-             "<div class='sum'>" + "".join(f"<span>{e(s)} {n}</span>" for s, n in counts(res).items())
+             "<div class='sum'>" + "".join(
+                 f"<span class='{ {ADDED: 'add', DELETED: 'del'}.get(s, '') }'>{e(s)} {n}</span>"
+                 for s, n in counts(res).items())
              + f"<span class='del'>오류 {len(res['errors'])}</span></div>"]
     if res["errors"]:
         parts.append("<h2>읽기 오류</h2><ul>" + "".join(
@@ -426,8 +429,8 @@ def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
                         list(counts(res).items()) + [("오류", len(res["errors"]))])
 
     ws = wb.create_sheet("함수 목록")
-    fd.xl_header(ws, ["파일", "함수", "상태", "A 줄", "B 줄", "추가", "삭제", "비고", "검토 결과", "검토 의견"],
-                 [40, 32, 10, 12, 12, 7, 7, 40, 12, 50])
+    fd.xl_header(ws, ["파일", "함수", "상태", "이전 줄", "현재 줄", "추가 줄", "삭제 줄", "비고", "검토 결과", "검토 의견"],
+                 [40, 32, 18, 12, 12, 8, 8, 40, 12, 50])
     link = fd.relative_link(html_path, out_path) if html_path else None
     rows = [(r["file"], r["func"], r["status"], r["a_range"], r["b_range"], r["added"], r["removed"],
              r["note"], STATUS_FILL[r["status"]], f"r{k}" if r["diff"] else None)
@@ -450,7 +453,7 @@ def exit_code(res):
 
 # ---------------------------------------------------------------- main
 def main():
-    ap = argparse.ArgumentParser(description="두 폴더의 C 파일을 함수 단위로 비교합니다.")
+    ap = argparse.ArgumentParser(description="이전 버전과 현재 버전의 C 파일을 함수 단위로 비교해 추가·삭제·변경된 함수를 보여줍니다.")
     fd.add_common_args(ap, ext_default=[".c"])
     ap.add_argument("-l", "--list", metavar="FILE",
                     help="비교 대상 목록 (.xlsx: A열 파일명·B열 함수명 / 텍스트: 한 줄에 '파일명,함수명')")

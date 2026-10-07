@@ -192,7 +192,7 @@ class CompareTest(TreeMixin, unittest.TestCase):
 
     def test_all_functions(self):
         self.assertEqual(self.result(), [
-            ("a_only.c", "x", fdf.ONLY_A),
+            ("a_only.c", "x", fdf.DELETED),
             ("bad.c", fdf.WHOLE_FILE, fdf.BROKEN),
             ("dup.c", fdf.FUNC_OUTSIDE, fdf.SAME),
             ("dup.c", "f", fdf.SAME),
@@ -200,8 +200,8 @@ class CompareTest(TreeMixin, unittest.TestCase):
             ("src/motor.c", fdf.FUNC_OUTSIDE, fdf.CHANGED),
             ("src/motor.c", "Motor_Init", fdf.CHANGED),
             ("src/motor.c", "Motor_Step", fdf.SAME),
-            ("src/motor.c", "Motor_Old", fdf.ONLY_A),
-            ("src/motor.c", "Motor_New", fdf.ONLY_B)])
+            ("src/motor.c", "Motor_Old", fdf.DELETED),
+            ("src/motor.c", "Motor_New", fdf.ADDED)])
 
     def test_row_details(self):
         rows = fdf.compare_funcs(self.a, self.b, ns())["rows"]
@@ -218,8 +218,8 @@ class CompareTest(TreeMixin, unittest.TestCase):
             ("dup.c", "f", fdf.SAME),
             ("dup.c", "f#2", fdf.SAME),
             ("src/motor.c", "Motor_Step", fdf.SAME),
-            ("src/motor.c", "Motor_Old", fdf.ONLY_A),
-            ("src/motor.c", "Motor_New", fdf.ONLY_B),
+            ("src/motor.c", "Motor_Old", fdf.DELETED),
+            ("src/motor.c", "Motor_New", fdf.ADDED),
             ("src/motor.c", "motor_init", fdf.NO_FUNC)])
 
     def test_numbered_entry_in_list(self):
@@ -229,7 +229,7 @@ class CompareTest(TreeMixin, unittest.TestCase):
 
     def test_blank_function_cell_excludes_outside(self):
         funcs = [("src/motor.c", f, s) for f, s in (("Motor_Init", fdf.CHANGED), ("Motor_Step", fdf.SAME),
-                                                     ("Motor_Old", fdf.ONLY_A), ("Motor_New", fdf.ONLY_B))]
+                                                     ("Motor_Old", fdf.DELETED), ("Motor_New", fdf.ADDED))]
         self.assertEqual(self.result({"src/motor.c": None}), funcs)
         outside = [("src/motor.c", fdf.FUNC_OUTSIDE, fdf.CHANGED)]
         self.assertEqual(self.result({"motor.c": None, "Motor.c": {fdf.FUNC_OUTSIDE}}), outside + funcs)
@@ -275,6 +275,9 @@ class CliTest(TreeMixin, unittest.TestCase):
         self.assertEqual([c.value for c in ws[1]][-2:], ["검토 결과", "검토 의견"])
         values = [tuple(c.value for c in row[:3]) for row in ws.iter_rows(min_row=2)]
         self.assertIn(("src/motor.c", "Motor_Init", "변경"), values)
+        self.assertIn(("src/motor.c", "Motor_New", "추가"), values)
+        self.assertIn(("src/motor.c", "Motor_Old", "삭제"), values)
+        self.assertIn("이전:", r.stdout)
         cell = next(row[1] for row in ws.iter_rows(min_row=2) if row[1].value == "Motor_Init")
         self.assertEqual(cell.hyperlink.target, "rep.html")
         page = out.with_suffix(".html").read_text(encoding="utf-8")

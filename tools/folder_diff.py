@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-두 폴더 비교 도구 (folder_diff.py)
+버전 비교 도구 (folder_diff.py)
 
-같은 상대 경로(하위 폴더 포함)의 파일끼리 짝지어 비교하고,
-변경된 파일은 어느 줄이 어떻게 바뀌었는지 보여줍니다.
+이전 버전과 현재 버전 폴더에서 같은 상대 경로(하위 폴더 포함)의 파일끼리 짝지어,
+어떤 파일이 추가·삭제·변경되었는지, 변경된 파일은 어느 줄이 어떻게 바뀌었는지 보여줍니다.
 
 사용 예:
-    python tools/folder_diff.py 폴더A 폴더B
-    python tools/folder_diff.py 폴더A 폴더B -o reports/report      # report.xlsx + report.html
-    python tools/folder_diff.py 폴더A 폴더B -w --exclude build "src/*.tmp"
-    python tools/folder_diff.py 폴더A 폴더B --ext .py .c .h .m
-    python tools/folder_diff.py 폴더A 폴더B -l 대상목록.xlsx -o reports/report
+    python tools/folder_diff.py 이전폴더 현재폴더
+    python tools/folder_diff.py 이전폴더 현재폴더 -o reports/report      # report.xlsx + report.html
+    python tools/folder_diff.py 이전폴더 현재폴더 -w --exclude build "src/*.tmp"
+    python tools/folder_diff.py 이전폴더 현재폴더 --ext .py .c .h .m
+    python tools/folder_diff.py 이전폴더 현재폴더 -l 대상목록.xlsx -o reports/report
 
 옵션:
     -w, --ignore-whitespace   줄 앞뒤 공백/줄바꿈(CRLF·LF) 차이 무시
@@ -273,8 +273,8 @@ def hunk_span(lines, i1, i2):
 
 def unified_lines(c):
     a, b = c["a"], c["b"]
-    yield f"--- A/{c['path']}"
-    yield f"+++ B/{c['path']}"
+    yield f"--- 이전/{c['path']}"
+    yield f"+++ 현재/{c['path']}"
     for group in c["hunks"]:
         yield (f"@@ -{hunk_span(a, group[0][1], group[-1][2])} "
                f"+{hunk_span(b, group[0][3], group[-1][4])} @@")
@@ -287,7 +287,7 @@ def unified_lines(c):
 
 
 def diff_rows(c):
-    """나란히 보기용 행 (종류, A 줄번호, A 원문, B 줄번호, B 원문). 종류 sep은 hunk 구분선"""
+    """나란히 보기용 행 (종류, 이전 줄번호, 이전 원문, 현재 줄번호, 현재 원문). 종류 sep은 hunk 구분선"""
     a, b = c["a"], c["b"]
     for k, group in enumerate(c["hunks"]):
         if k:
@@ -329,12 +329,12 @@ def print_unified(c):
 
 def print_report(res, dir_a, dir_b, summary_only):
     line = "=" * 70
-    print(f"{C.BOLD}{line}\n 폴더 비교\n  A: {dir_a}\n  B: {dir_b}\n{line}{C.RESET}")
+    print(f"{C.BOLD}{line}\n 버전 비교\n  이전: {dir_a}\n  현재: {dir_b}\n{line}{C.RESET}")
     extra = f"  |  무시됨: {len(res['ignored'])}" if res["ignored"] else ""
-    extra += f"  |  {C.RED}양쪽에 없음: {len(res['missing'])}{C.RESET}" if res["missing"] else ""
+    extra += f"  |  {C.RED}찾을 수 없음: {len(res['missing'])}{C.RESET}" if res["missing"] else ""
     extra += f"  |  {C.RED}오류: {len(res['errors'])}{C.RESET}" if res["errors"] else ""
-    print(f"  동일: {len(res['same'])}  |  변경: {count_changed(res)}"
-          f"  |  A에만: {len(res['only_a'])}  |  B에만: {len(res['only_b'])}{extra}\n")
+    print(f"  추가: {len(res['only_b'])}  |  삭제: {len(res['only_a'])}"
+          f"  |  변경: {count_changed(res)}  |  동일: {len(res['same'])}{extra}\n")
 
     if res["errors"]:
         print(f"{C.BOLD}[읽기 오류]{C.RESET}")
@@ -342,19 +342,19 @@ def print_report(res, dir_a, dir_b, summary_only):
             print(f"  {C.RED}! {er['path']}{C.RESET}  ({er['detail']})")
         print()
     if res["missing"]:
-        print(f"{C.BOLD}[양쪽에 없음 (비교 대상 목록에만 있음)]{C.RESET}")
+        print(f"{C.BOLD}[찾을 수 없음 (목록에 있지만 두 버전 모두에 없음)]{C.RESET}")
         for p in res["missing"]:
             print(f"  {C.RED}? {p}{C.RESET}")
         print()
-    if res["only_a"]:
-        print(f"{C.BOLD}[A에만 있는 파일]{C.RESET}")
-        for p in res["only_a"]:
-            print(f"  {C.RED}- {p}{C.RESET}")
-        print()
     if res["only_b"]:
-        print(f"{C.BOLD}[B에만 있는 파일]{C.RESET}")
+        print(f"{C.BOLD}[추가된 파일]{C.RESET}")
         for p in res["only_b"]:
             print(f"  {C.GREEN}+ {p}{C.RESET}")
+        print()
+    if res["only_a"]:
+        print(f"{C.BOLD}[삭제된 파일]{C.RESET}")
+        for p in res["only_a"]:
+            print(f"  {C.RED}- {p}{C.RESET}")
         print()
     if count_changed(res):
         print(f"{C.BOLD}[변경된 파일]{C.RESET}")
@@ -393,6 +393,7 @@ tr.delete td.ta{background:#ffebe9} tr.insert td.tb{background:#dafbe1}
 tr.replace td.ta,tr.replace td.tb{background:#fff8c5}
 tr.replace td.ta mark{background:#ffc1bd} tr.replace td.tb mark{background:#aceebb}
 tr.sep td{background:#f6f8fa;color:#888;text-align:center}
+tr.hd th{background:#eee;padding:2px 4px;text-align:left;font-family:'Segoe UI','Malgun Gothic',sans-serif}
 """
 # report.html#앵커 로 열면 해당 <details>를 펼쳐서 보여줌 (엑셀 링크용)
 HASH_SCRIPT = ("<script>function openHash(){var d=document.getElementById(location.hash.slice(1));"
@@ -421,7 +422,8 @@ def inline_diff(a, b):
 
 def html_table(c):
     e = html.escape
-    rows = ["<table class='diff'><col class='no'><col><col class='no'><col>"]
+    rows = ["<table class='diff'><col class='no'><col><col class='no'><col>"
+            "<tr class='hd'><th colspan='2'>이전</th><th colspan='2'>현재</th></tr>"]
     for kind, na, ta, nb, tb in diff_rows(c):
         if kind == "sep":
             rows.append("<tr class='sep'><td colspan='4'>⋯</td></tr>")
@@ -435,16 +437,16 @@ def html_table(c):
 
 def write_html(res, dir_a, dir_b, out_path):
     e = html.escape
-    parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>폴더 비교 리포트</title>"
+    parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>버전 비교 리포트</title>"
              f"<style>{HTML_CSS}</style></head><body>",
-             f"<h1>폴더 비교 리포트</h1><p>A: <code>{e(str(dir_a))}</code><br>B: <code>{e(str(dir_b))}</code><br>"
+             f"<h1>버전 비교 리포트</h1><p>이전: <code>{e(str(dir_a))}</code><br>현재: <code>{e(str(dir_b))}</code><br>"
              f"생성: {datetime.now():%Y-%m-%d %H:%M}</p>",
-             f"<div class='sum'><span>동일 {len(res['same'])}</span>"
+             f"<div class='sum'><span class='add'>추가 {len(res['only_b'])}</span>"
+             f"<span class='del'>삭제 {len(res['only_a'])}</span>"
              f"<span>변경 {count_changed(res)}</span>"
-             f"<span class='del'>A에만 {len(res['only_a'])}</span>"
-             f"<span class='add'>B에만 {len(res['only_b'])}</span>"
+             f"<span>동일 {len(res['same'])}</span>"
              f"<span>무시됨 {len(res['ignored'])}</span>"
-             + (f"<span class='del'>양쪽에 없음 {len(res['missing'])}</span>" if res["missing"] else "") +
+             + (f"<span class='del'>찾을 수 없음 {len(res['missing'])}</span>" if res["missing"] else "") +
              f"<span class='del'>오류 {len(res['errors'])}</span></div>"]
 
     if res["errors"]:
@@ -461,8 +463,8 @@ def write_html(res, dir_a, dir_b, out_path):
                      f"</summary>{html_table(c)}</details>")
 
     # 나머지 목록은 엑셀 리포트가 주 용도이므로 접어서 표시
-    others = [("양쪽에 없음 (비교 대상 목록에만 있음)", res["missing"], "del"),
-              ("A에만 있는 파일", res["only_a"], "del"), ("B에만 있는 파일", res["only_b"], "add"),
+    others = [("찾을 수 없음 (목록에 있지만 두 버전 모두에 없음)", res["missing"], "del"),
+              ("추가된 파일", res["only_b"], "add"), ("삭제된 파일", res["only_a"], "del"),
               ("형식만 다른 파일 (줄바꿈/인코딩/BOM)",
                [f"{c['path']} — {c['detail']}" for c in res["format_changed"]], ""),
               ("변경된 바이너리 파일", res["binary_changed"], ""),
@@ -513,7 +515,7 @@ def xl_summary_sheet(ws, dir_a, dir_b, options, counts):
     """요약 시트: 폴더·생성 시각·옵션 아래에 (구분, 개수) 목록"""
     from openpyxl.styles import Font
     bold = Font(bold=True)
-    info = [("A 폴더", str(dir_a)), ("B 폴더", str(dir_b)),
+    info = [("이전 폴더", str(dir_a)), ("현재 폴더", str(dir_b)),
             ("생성", f"{datetime.now():%Y-%m-%d %H:%M}"), ("옵션", options), (None, None),
             ("구분", "개수")] + list(counts)
     for r, (k, v) in enumerate(info, 1):
@@ -549,20 +551,20 @@ def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
     ws = wb.active
     ws.title = "요약"
     xl_summary_sheet(ws, dir_a, dir_b, options, [
-        ("동일", len(res["same"])), ("변경", count_changed(res)),
-        ("A에만", len(res["only_a"])), ("B에만", len(res["only_b"])),
-        ("무시됨", len(res["ignored"])), ("양쪽에 없음", len(res["missing"])),
+        ("추가", len(res["only_b"])), ("삭제", len(res["only_a"])),
+        ("변경", count_changed(res)), ("동일", len(res["same"])),
+        ("무시됨", len(res["ignored"])), ("찾을 수 없음", len(res["missing"])),
         ("오류", len(res["errors"]))])
 
     ws = wb.create_sheet("파일 목록")
-    xl_header(ws, ["경로", "상태", "추가", "삭제", "비고"], [60, 14, 8, 8, 50])
-    rows = ([(c["path"], "변경", c["added"], c["removed"], "", "yellow") for c in res["changed"]] +
+    xl_header(ws, ["경로", "상태", "추가 줄", "삭제 줄", "비고"], [60, 14, 9, 9, 50])
+    rows = ([(p, "추가", None, None, "현재 버전에 새로 생김", "green") for p in res["only_b"]] +
+            [(p, "삭제", None, None, "현재 버전에서 없어짐", "red") for p in res["only_a"]] +
+            [(c["path"], "변경", c["added"], c["removed"], "", "yellow") for c in res["changed"]] +
             [(c["path"], "형식만 다름", None, None, c["detail"], "yellow") for c in res["format_changed"]] +
             [(p, "바이너리 변경", None, None, "", "yellow") for p in res["binary_changed"]] +
-            [(p, "A에만", None, None, "", "red") for p in res["only_a"]] +
-            [(p, "B에만", None, None, "", "green") for p in res["only_b"]] +
             [(p, "무시됨", None, None, "옵션으로 무시된 공백 차이", "gray") for p in res["ignored"]] +
-            [(p, "양쪽에 없음", None, None, "비교 대상 목록에만 있음", "error") for p in res["missing"]] +
+            [(p, "찾을 수 없음", None, None, "목록에 있지만 두 버전 모두에 없음", "error") for p in res["missing"]] +
             [(er["path"], "오류", None, None, er["detail"], "error") for er in res["errors"]] +
             [(p, "동일", None, None, "", None) for p in res["same"]])
     # 변경 파일 경로를 HTML 리포트의 해당 diff로 링크 (엑셀 파일 기준 상대 경로)
@@ -580,8 +582,8 @@ def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
 # ---------------------------------------------------------------- 실행 준비 (func_diff.py에서도 사용)
 def add_common_args(ap, ext_default=None):
     """folder_diff·func_diff 공통 명령줄 옵션"""
-    ap.add_argument("dir_a", help="기준 폴더 (A)")
-    ap.add_argument("dir_b", help="비교 폴더 (B)")
+    ap.add_argument("dir_a", metavar="이전폴더", help="이전 버전 폴더")
+    ap.add_argument("dir_b", metavar="현재폴더", help="현재 버전 폴더")
     ap.add_argument("-w", "--ignore-whitespace", action="store_true", help="줄 앞뒤 공백 차이 무시")
     ap.add_argument("-B", "--ignore-blank-lines", action="store_true", help="빈 줄 차이 무시")
     ap.add_argument("-x", "--exclude", nargs="+", metavar="PATTERN",
@@ -651,7 +653,7 @@ def options_text(args):
 
 # ---------------------------------------------------------------- main
 def main():
-    ap = argparse.ArgumentParser(description="두 폴더의 코드를 같은 파일 이름(상대 경로) 기준으로 비교합니다.")
+    ap = argparse.ArgumentParser(description="이전 버전과 현재 버전 폴더를 비교해 추가·삭제·변경된 파일과 바뀐 줄을 보여줍니다.")
     add_common_args(ap)
     ap.add_argument("-l", "--list", metavar="FILE",
                     help="비교 대상 목록 파일 (.xlsx는 첫 시트 A열, 그 외는 한 줄에 하나). 목록에 있는 파일만 비교")
