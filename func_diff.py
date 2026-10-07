@@ -18,8 +18,13 @@ C 함수 단위 비교 도구 (func_diff.py)
 종료 코드: 0 = 차이 없음, 1 = 차이 있음, 2 = 읽기 오류 또는 분석 불가 파일 있음
 folder_diff.py와 같은 폴더에 있어야 합니다.
 """
+import argparse
 import bisect
+import html
 import re
+import sys
+from datetime import datetime
+from pathlib import Path
 
 import folder_diff as fd
 
@@ -314,3 +319,145 @@ def compare_funcs(dir_a, dir_b, args, plan=None):
         except OSError as ex:
             errors.append({"path": rel, "detail": f"파일 읽기 실패: {ex.strerror or ex}"})
     return {"rows": rows, "errors": errors}
+
+
+# ---------------------------------------------------------------- 출력
+STATUS_ORDER = [CHANGED, ONLY_A, ONLY_B, NO_FUNC, NO_FILE, BROKEN, SAME]
+STATUS_FILL = {CHANGED: "yellow", ONLY_A: "red", ONLY_B: "green",
+               NO_FUNC: "error", NO_FILE: "error", BROKEN: "error", SAME: None}
+
+
+def counts(res):
+    c = {s: 0 for s in STATUS_ORDER}
+    for r in res["rows"]:
+        c[r["status"]] += 1
+    return c
+
+
+def print_report(res, dir_a, dir_b, summary_only):
+    C = fd.C
+    line = "=" * 70
+    print(f"{C.BOLD}{line}\n 함수 비교\n  A: {dir_a}\n  B: {dir_b}\n{line}{C.RESET}")
+    summary = [f"{s}: {n}" for s, n in counts(res).items() if n or s in (CHANGED, SAME)]
+    errors = f"  |  {C.RED}오류: {len(res['errors'])}{C.RESET}" if res["errors"] else ""
+    print("  " + "  |  ".join(summary) + errors + "\n")
+    for er in res["errors"]:
+        print(f"  {C.RED}! {er['path']}{C.RESET}  ({er['detail']})")
+    color = {CHANGED: C.YELLOW, ONLY_A: C.RED, ONLY_B: C.GREEN,
+             NO_FUNC: C.RED, NO_FILE: C.RED, BROKEN: C.RED, SAME: ""}
+    current = None
+    for r in res["rows"]:
+        if r["file"] != current:
+            current = r["file"]
+            print(f"{C.BOLD}[{current}]{C.RESET}")
+        stat = f" (+{r['added']} / -{r['removed']})" if r["status"] == CHANGED else ""
+        note = f"  - {r['note']}" if r["note"] else ""
+        print(f"  {color[r['status']]}{r['status']}{C.RESET}  {r['func']}{stat}{note}")
+    print()
+    if summary_only:
+        return
+    for r in res["rows"]:
+        if r["diff"]:
+            print(f"{C.BOLD}{'-' * 70}\n {r['file']} :: {r['func']}  [{r['status']}]\n{'-' * 70}{C.RESET}")
+            fd.print_unified({"path": f"{r['file']}::{r['func']}", **r["diff"]})
+            print()
+
+
+def write_html(res, dir_a, dir_b, out_path):
+    e = html.escape
+    parts = [f"<!doctype html><html><head><meta charset='utf-8'><title>함수 비교 리포트</title>"
+             f"<style>{fd.HTML_CSS}</style></head><body>",
+             f"<h1>함수 비교 리포트</h1><p>A: <code>{e(str(dir_a))}</code><br>B: <code>{e(str(dir_b))}</code><br>"
+             f"생성: {datetime.now():%Y-%m-%d %H:%M}</p>",
+             "<div class='sum'>" + "".join(f"<span>{e(s)} {n}</span>" for s, n in counts(res).items())
+             + f"<span class='del'>오류 {len(res['errors'])}</span></div>"]
+    if res["errors"]:
+        parts.append("<h2>읽기 오류</h2><ul>" + "".join(
+            f"<li class='del'>{e(er['path'])} — {e(er['detail'])}</li>" for er in res["errors"]) + "</ul>")
+    missing = [r for r in res["rows"] if r["status"] in (NO_FUNC, NO_FILE)]
+    if missing:
+        parts.append("<h2>목록에서 찾지 못한 항목</h2><ul>" + "".join(
+            f"<li class='del'>{e(r['file'])} :: {e(r['func'])} — {e(r['status'])}</li>" for r in missing) + "</ul>")
+    by_file = {}
+    for k, r in enumerate(res["rows"]):
+        if r["status"] not in (NO_FUNC, NO_FILE):
+            by_file.setdefault(r["file"], []).append((k, r))
+    for file, items in by_file.items():
+        parts.append(f"<h2>{e(file)}</h2>")
+        for k, r in items:
+            if r["diff"]:
+                stat = f" <span class='add'>+{r['added']}</span> <span class='del'>-{r['removed']}</span>"
+                parts.append(f"<details id='r{k}'><summary>{e(r['func'])} [{e(r['status'])}]{stat}"
+                             f"</summary>{fd.html_table(r['diff'])}</details>")
+        rest = [r for _, r in items if not r["diff"]]
+        if rest:
+            parts.append(f"<details><summary>차이 없는 항목 ({len(rest)})</summary><ul>" + "".join(
+                f"<li>{e(r['func'])} [{e(r['status'])}]</li>" for r in rest) + "</ul></details>")
+    parts.append(fd.HASH_SCRIPT + "</body></html>")
+    Path(out_path).write_text("\n".join(parts), encoding="utf-8")
+
+
+def write_excel(res, dir_a, dir_b, out_path, options, html_path=None):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    mono = Font(name="Consolas")
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "요약"
+    fd.xl_summary_sheet(ws, dir_a, dir_b, options,
+                        list(counts(res).items()) + [("오류", len(res["errors"]))])
+
+    ws = wb.create_sheet("함수 목록")
+    fd.xl_header(ws, ["파일", "함수", "상태", "A 줄", "B 줄", "추가", "삭제", "비고", "검토 결과", "검토 의견"],
+                 [40, 32, 10, 12, 12, 7, 7, 40, 12, 50])
+    link = fd.relative_link(html_path, out_path) if html_path else None
+    rows = [(r["file"], r["func"], r["status"], r["a_range"], r["b_range"], r["added"], r["removed"],
+             r["note"], STATUS_FILL[r["status"]], f"r{k}" if r["diff"] else None)
+            for k, r in enumerate(res["rows"])]
+    rows += [(er["path"], "", "오류", "", "", None, None, er["detail"], "error", None) for er in res["errors"]]
+    for n, (*values, fill_key, anchor) in enumerate(rows, 2):
+        for col, v in enumerate(values, 1):
+            fd.xl_put(ws, n, col, v, fill_key if col == 3 else None, mono if col in (1, 2) else None)
+        if link and anchor:
+            fd.xl_link(ws.cell(n, 2), link, anchor)
+    ws.auto_filter.ref = f"A1:J{len(rows) + 1}"
+    wb.save(out_path)
+
+
+def exit_code(res):
+    if res["errors"] or any(r["status"] == BROKEN for r in res["rows"]):
+        return 2
+    return 1 if any(r["status"] != SAME for r in res["rows"]) else 0
+
+
+# ---------------------------------------------------------------- main
+def main():
+    ap = argparse.ArgumentParser(description="두 폴더의 C 파일을 함수 단위로 비교합니다.")
+    fd.add_common_args(ap, ext_default=[".c"])
+    ap.add_argument("-l", "--list", metavar="FILE",
+                    help="비교 대상 목록 (.xlsx: A열 파일명·B열 함수명 / 텍스트: 한 줄에 '파일명,함수명')")
+    args = ap.parse_args()
+
+    dir_a, dir_b = fd.check_dirs(args)
+    fd.resolve_report_paths(args)
+    list_path = fd.check_list_path(args.list)
+    fd.require_openpyxl(args, list_path)
+    plan = load_func_list(list_path) if list_path else None
+    if plan == {}:
+        sys.exit(f"비교 대상 목록이 비어 있습니다: {list_path.resolve()}")
+    fd.setup_console(args.no_color)
+
+    res = compare_funcs(dir_a, dir_b, args, plan)
+    print_report(res, dir_a, dir_b, args.summary)
+    if args.html:
+        write_html(res, dir_a, dir_b, args.html)
+        print(f"HTML 리포트 저장: {Path(args.html).resolve()}")
+    if args.excel:
+        write_excel(res, dir_a, dir_b, args.excel, fd.options_text(args), args.html)
+        print(f"엑셀 리포트 저장: {Path(args.excel).resolve()}")
+    sys.exit(exit_code(res))
+
+
+if __name__ == "__main__":
+    main()

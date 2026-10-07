@@ -1,4 +1,6 @@
 import argparse
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -209,6 +211,41 @@ class CompareTest(TreeMixin, unittest.TestCase):
         plan = {"w.c": {"f"}}
         self.assertEqual(self.result(plan), [("w.c", "f", fdf.CHANGED)])
         self.assertEqual(self.result(plan, ignore_whitespace=True), [("w.c", "f", fdf.SAME)])
+
+
+def run_cli(*argv):
+    return subprocess.run([sys.executable, str(ROOT / "func_diff.py"), *map(str, argv), "--no-color"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})  # 파이프 stderr 인코딩을 고정
+
+
+class CliTest(TreeMixin, unittest.TestCase):
+    def test_reports_and_exit_code(self):
+        out = Path(self.tmp.name, "out", "rep")
+        r = run_cli(self.a, self.b, "-o", out)
+        self.assertEqual(r.returncode, 2, r.stderr)  # bad.c 분석 불가
+        self.assertIn("Motor_Init", r.stdout)
+        self.assertIn("g = 1;", r.stdout)  # 변경 함수 diff 출력
+        import openpyxl
+        ws = openpyxl.load_workbook(out.with_suffix(".xlsx"))["함수 목록"]
+        self.assertEqual([c.value for c in ws[1]][-2:], ["검토 결과", "검토 의견"])
+        values = [tuple(c.value for c in row[:3]) for row in ws.iter_rows(min_row=2)]
+        self.assertIn(("src/motor.c", "Motor_Init", "변경"), values)
+        cell = next(row[1] for row in ws.iter_rows(min_row=2) if row[1].value == "Motor_Init")
+        self.assertEqual(cell.hyperlink.target, "rep.html")
+        page = out.with_suffix(".html").read_text(encoding="utf-8")
+        self.assertIn(f"id='{cell.hyperlink.location}'", page)
+
+    def test_list_mode_exit_codes(self):
+        lst = Path(self.tmp.name, "list.txt")
+        lst.write_text("motor.c,Motor_Step\n", encoding="utf-8")
+        self.assertEqual(run_cli(self.a, self.b, "-l", lst, "--summary").returncode, 0)
+        lst.write_text("motor.c,Motor_Init\n", encoding="utf-8")
+        self.assertEqual(run_cli(self.a, self.b, "-l", lst, "--summary").returncode, 1)
+        lst.write_text("파일명,함수명\n", encoding="utf-8")
+        r = run_cli(self.a, self.b, "-l", lst)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("비어 있습니다", r.stderr)
 
 
 if __name__ == "__main__":
