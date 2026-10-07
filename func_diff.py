@@ -225,3 +225,92 @@ def load_func_list(path):
         elif plan[cur] is not None:
             plan[cur].add(fn)
     return plan
+
+
+# ---------------------------------------------------------------- 함수 단위 비교
+SAME, CHANGED, ONLY_A, ONLY_B = "동일", "변경", "A에만", "B에만"
+NO_FUNC, NO_FILE, BROKEN = "함수 없음", "파일 없음", "분석 불가"
+
+
+def make_row(file, func, status, a_range="", b_range="", diff=None, note=""):
+    return {"file": file, "func": func, "status": status, "a_range": a_range, "b_range": b_range,
+            "added": diff["added"] if diff else None, "removed": diff["removed"] if diff else None,
+            "note": note, "diff": diff}
+
+
+def read_side(path, args):
+    """파일 한쪽을 읽어 (split_units 결과, normalize 결과) 반환. 파일이 없으면 None"""
+    if path is None:
+        return None
+    lines, _ = fd.decode_lines(path.read_bytes())
+    return split_units(lines), fd.normalize(lines, args.ignore_whitespace, args.ignore_blank_lines)
+
+
+def pick(side, nums):
+    """normalize 결과에서 nums 줄만 골라냄 (-B로 빠진 빈 줄은 이미 제외됨)"""
+    if side is None or nums is None:
+        return []
+    keep = set(nums)
+    return [x for x in side[1] if x[0] in keep]
+
+
+def line_range(name, nums):
+    return f"{nums[0]}-{nums[-1]}" if nums and name != FUNC_OUTSIDE else ""
+
+
+def compare_c_file(rel, pa, pb, wanted, args, rows):
+    """C 파일 한 쌍을 함수 단위로 비교해 rows에 결과 행을 추가. wanted: None(전부) 또는 함수명 집합"""
+    sa, sb = read_side(pa, args), read_side(pb, args)
+    broken = [s for s, side in (("A", sa), ("B", sb)) if side and side[0] is None]
+    if broken:  # 중괄호 짝이 안 맞으면 파일 전체 diff로 대체
+        d = fd.line_diff(sa[1] if sa else [], sb[1] if sb else [], args.context)
+        rows.append(make_row(rel, WHOLE_FILE, BROKEN, diff=d,
+                             note=f"중괄호 짝 불일치({', '.join(broken)}) - 파일 전체 비교로 대체"))
+        return
+    ua, ub = (sa[0] if sa else {}), (sb[0] if sb else {})
+    names = list(ua) + [k for k in ub if k not in ua]
+    if wanted is not None:
+        names = [k for k in names if k.split("#")[0] in wanted]
+    for name in names:
+        la, lb = ua.get(name), ub.get(name)
+        na, nb = pick(sa, la), pick(sb, lb)
+        if name == FUNC_OUTSIDE and not na and not nb:
+            continue
+        d = fd.line_diff(na, nb, args.context)
+        if la is not None and lb is not None:
+            status = CHANGED if d else SAME
+        else:  # 한쪽에만 있으면 본문 전체가 삭제/추가로 보임
+            status = ONLY_A if la is not None else ONLY_B
+        rows.append(make_row(rel, name, status, line_range(name, la), line_range(name, lb), d))
+    if wanted is not None:
+        found = {k.split("#")[0] for k in names}
+        for fn in sorted(wanted - found):
+            rows.append(make_row(rel, fn, NO_FUNC, note="A·B 양쪽 파일 모두에 없음 (함수명은 대소문자 구분)"))
+
+
+def compare_funcs(dir_a, dir_b, args, plan=None):
+    """두 폴더의 C 파일을 함수 단위로 비교. plan은 load_func_list() 결과(없으면 전체 비교).
+    반환: {"rows": [결과 행…], "errors": [{"path", "detail"}…]}"""
+    excludes, exts = fd.file_filters(args)
+    errors, rows = [], []
+    fa = fd.collect_files(dir_a, excludes, exts, errors)
+    fb = fd.collect_files(dir_b, excludes, exts, errors)
+    if plan is None:
+        targets = {rel: None for rel in set(fa) | set(fb)}
+    else:
+        targets, every = {}, set(fa) | set(fb)
+        for entry, funcs in plan.items():
+            hits, _ = fd.match_targets(every, [entry])
+            if not hits:
+                for fn in (sorted(funcs) if funcs else [WHOLE_FILE]):
+                    rows.append(make_row(entry, fn, NO_FILE, note="A·B 양쪽 폴더 모두에 없음"))
+                continue
+            for rel in hits:  # 같은 파일이 목록에 여러 번 나오면 함수 집합을 합침
+                prev = targets.get(rel, set())
+                targets[rel] = None if funcs is None or prev is None else prev | funcs
+    for rel in sorted(targets):
+        try:
+            compare_c_file(rel, fa.get(rel), fb.get(rel), targets[rel], args, rows)
+        except OSError as ex:
+            errors.append({"path": rel, "detail": f"파일 읽기 실패: {ex.strerror or ex}"})
+    return {"rows": rows, "errors": errors}

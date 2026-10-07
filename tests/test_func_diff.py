@@ -13,6 +13,44 @@ def names(src):
     return fdf.find_functions(src.splitlines())
 
 
+def make_tree(root: Path, files: dict):
+    for rel, data in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(data, encoding="utf-8")
+
+
+def ns(**kw):
+    base = dict(exclude=None, ext=[".c"], ignore_whitespace=False, ignore_blank_lines=False, context=3)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+A_MOTOR = ("#define GAIN 2\n"
+           "static int g;\n"
+           "void Motor_Init(void)\n{\n  g = 0;\n}\n"
+           "void Motor_Step(void)\n{\n  g += GAIN;\n}\n"
+           "void Motor_Old(void)\n{\n}\n")
+B_MOTOR = ("#define GAIN 3\n"
+           "static int g;\n"
+           "void Motor_Step(void)\n{\n  g += GAIN;\n}\n"
+           "void Motor_Init(void)\n{\n  g = 1;\n}\n"
+           "void Motor_New(void)\n{\n}\n")
+DUP = "void f(void) {\n}\n#if X\nvoid f(void) {\n}\n#endif\n"
+
+
+class TreeMixin:
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.a, self.b = Path(self.tmp.name, "A"), Path(self.tmp.name, "B")
+        make_tree(self.a, {"src/motor.c": A_MOTOR, "bad.c": "void f(void) {\n", "dup.c": DUP,
+                           "a_only.c": "void x(void)\n{\n}\n", "readme.txt": "x"})
+        make_tree(self.b, {"src/motor.c": B_MOTOR, "bad.c": "void f(void) {\n}\n", "dup.c": DUP})
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+
 class ScannerTest(unittest.TestCase):
     def test_plain_and_static(self):
         src = "int g;\n\nint add(int a, int b)\n{\n  return a + b;\n}\nstatic void helper(void) { }\n"
@@ -126,6 +164,51 @@ class ListTest(unittest.TestCase):
         p.write_text("파일,함수\nmotor.c,Motor_Init\n,Motor_Step\n# 주석\nutil.c\nutil.c,Ignored\n",
                      encoding="utf-8")
         self.assertEqual(fdf.load_func_list(p), {"motor.c": {"Motor_Init", "Motor_Step"}, "util.c": None})
+
+
+class CompareTest(TreeMixin, unittest.TestCase):
+    def result(self, plan=None, **kw):
+        res = fdf.compare_funcs(self.a, self.b, ns(**kw), plan)
+        return [(r["file"], r["func"], r["status"]) for r in res["rows"]]
+
+    def test_all_functions(self):
+        self.assertEqual(self.result(), [
+            ("a_only.c", "x", fdf.ONLY_A),
+            ("bad.c", fdf.WHOLE_FILE, fdf.BROKEN),
+            ("dup.c", fdf.FUNC_OUTSIDE, fdf.SAME),
+            ("dup.c", "f", fdf.SAME),
+            ("dup.c", "f#2", fdf.SAME),
+            ("src/motor.c", fdf.FUNC_OUTSIDE, fdf.CHANGED),
+            ("src/motor.c", "Motor_Init", fdf.CHANGED),
+            ("src/motor.c", "Motor_Step", fdf.SAME),
+            ("src/motor.c", "Motor_Old", fdf.ONLY_A),
+            ("src/motor.c", "Motor_New", fdf.ONLY_B)])
+
+    def test_row_details(self):
+        rows = fdf.compare_funcs(self.a, self.b, ns())["rows"]
+        init = next(r for r in rows if r["func"] == "Motor_Init")
+        self.assertEqual((init["a_range"], init["b_range"], init["added"], init["removed"]), ("3-6", "7-10", 1, 1))
+        old = next(r for r in rows if r["func"] == "Motor_Old")
+        self.assertEqual((old["a_range"], old["b_range"], old["removed"]), ("11-13", "", 3))
+
+    def test_plan(self):
+        plan = {"motor.c": {"Motor_Step", "motor_init", "Motor_Old"}, "Motor.C": {"Motor_New"},
+                "nofile.c": {"X"}, "dup.c": {"f"}}
+        self.assertEqual(self.result(plan), [
+            ("nofile.c", "X", fdf.NO_FILE),
+            ("dup.c", "f", fdf.SAME),
+            ("dup.c", "f#2", fdf.SAME),
+            ("src/motor.c", "Motor_Step", fdf.SAME),
+            ("src/motor.c", "Motor_Old", fdf.ONLY_A),
+            ("src/motor.c", "Motor_New", fdf.ONLY_B),
+            ("src/motor.c", "motor_init", fdf.NO_FUNC)])
+
+    def test_ignore_whitespace(self):
+        make_tree(self.a, {"w.c": "void f(void)\n{\n  x();\n}\n"})
+        make_tree(self.b, {"w.c": "void f(void)\n{\n\tx();   \n}\n"})
+        plan = {"w.c": {"f"}}
+        self.assertEqual(self.result(plan), [("w.c", "f", fdf.CHANGED)])
+        self.assertEqual(self.result(plan, ignore_whitespace=True), [("w.c", "f", fdf.SAME)])
 
 
 if __name__ == "__main__":
