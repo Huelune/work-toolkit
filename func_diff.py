@@ -94,7 +94,7 @@ def mask_c(text):
             j = i + 1
             while j < n and text[j] != ch and text[j] != "\n":
                 j += 2 if text[j] == "\\" else 1
-            e = j + 1 if j < n and text[j] == ch else j
+            e = min(j + 1, n) if j < n and text[j] == ch else min(j, n)
             blank(i, e)
             i = e
         else:

@@ -37,6 +37,11 @@ class ScannerTest(unittest.TestCase):
         src = "#ifdef A\nvoid f(int a)\n#else\nvoid f(void)\n#endif\n{\n}\n"
         self.assertEqual(names(src), [("f", 2, 7)])
 
+    def test_truncated_literal_at_eof(self):
+        self.assertEqual(fdf.mask_c("x = '\\"), "x =   ")
+        self.assertEqual(fdf.mask_c('x = "\\'), "x =   ")
+        self.assertEqual(names("void f(void)\n{\n}\nx = '\\"), [("f", 1, 3)])
+
     def test_not_functions(self):
         src = ("void proto(void);\n"
                "void (*fp)(int);\n"
