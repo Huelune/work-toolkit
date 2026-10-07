@@ -90,7 +90,7 @@ class ScannerTest(unittest.TestCase):
 
     def test_unterminated_quotes(self):
         self.assertEqual(names("#error don't do this\nvoid f(void)\n{\n}\n"), [("f", 2, 4)])
-        self.assertEqual(names("#if 0\nthis doesn't { build\n#endif\nvoid g(void)\n{\n}\n"), [("g", 4, 6)])
+        self.assertEqual(names("#if 0\nx = 'a\n#define X {\n#endif\nint y;\nvoid g(void)\n{\n}\n"), [("g", 6, 8)])
 
 
 if __name__ == "__main__":
