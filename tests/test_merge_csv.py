@@ -14,6 +14,7 @@ SAMPLE = (
     "1,first,1,,,9,,0,5\n"
     ",,,,,,,,\n"
     "2,second,,2,,9,,,\n"
+    "3,third,\"L1\nL2\",,,,,,\n"
 )
 
 
@@ -28,13 +29,14 @@ class MergeCsvTest(unittest.TestCase):
                                env={**os.environ, "PYTHONIOENCODING": "utf-8"})
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn("secret", r.stdout)          # 화면에 파일 이름이 찍히지 않음
-            self.assertIn("파일 1개, 2줄", r.stdout)
+            self.assertIn("파일 1개, 3줄", r.stdout)
             self.assertIn("DRM", r.stdout)
             with (d / "result.csv").open(encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.reader(f))
             self.assertEqual(rows[0], ["test", "tc", "", "", ""])
             self.assertEqual(rows[1], ["secret_case", "1", "first", "a : 1", "a : 0\nx : 5"])
             self.assertEqual(rows[2], ["secret_case", "2", "second", "b : 2", ""])
+            self.assertEqual(rows[3], ["secret_case", "3", "third", "a : L1\nL2", ""])  # 셀 안 줄바꿈 유지
 
 
 if __name__ == "__main__":

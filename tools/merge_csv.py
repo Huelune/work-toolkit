@@ -15,6 +15,7 @@
   python merge_csv.py <입력폴더> [출력파일]
 """
 import csv
+import io
 import sys
 from collections import Counter
 from pathlib import Path
@@ -44,7 +45,8 @@ def read_rows(path: Path):
         return []
     head = lines[HEADER_ROW]
     delim = "\t" if head.count("\t") > head.count(",") else ","
-    return list(csv.reader(lines, delimiter=delim))
+    # 줄로 자른 lines가 아니라 원문을 넘겨야 따옴표 셀 안의 줄바꿈이 남는다
+    return list(csv.reader(io.StringIO(text, newline=""), delimiter=delim))
 
 
 def map_sections(header):
@@ -73,7 +75,7 @@ def parse_file(path: Path):
             continue
         cells = {s: [] for s in OUT_SECTIONS}
         for i, (section, sig) in colmap.items():
-            val = row[i].strip() if i < len(row) else ""
+            val = row[i].strip().replace("\r\n", "\n") if i < len(row) else ""
             if section in cells and val != "":
                 cells[section].append(f"{sig} : {val}")
         tc = row[0].strip()
