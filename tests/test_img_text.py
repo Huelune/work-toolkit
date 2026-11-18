@@ -24,8 +24,11 @@ class ImgTextTest(unittest.TestCase):
     def test_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            subprocess.run(["powershell", "-NoProfile", "-Command", DRAW], check=True,
-                           env={**os.environ, "IMG_OUT": str(d / "secret_shot.png")})
+            try:
+                subprocess.run(["powershell", "-NoProfile", "-Command", DRAW], check=True,
+                               env={**os.environ, "IMG_OUT": str(d / "secret_shot.png")})
+            except (OSError, subprocess.CalledProcessError):
+                self.skipTest("테스트 이미지를 만들 수 없음 (PowerShell 차단)")
             (d / "secret_broken.png").write_bytes(b"SCDSA\x00\x01")
             r = subprocess.run([sys.executable, str(ROOT / "tools" / "img_text.py"), str(d)],
                                capture_output=True, text=True, encoding="utf-8", errors="replace",
