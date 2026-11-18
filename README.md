@@ -42,6 +42,15 @@ python tools/merge_csv.py CSV폴더
 폴더 안의 CSV를 테스트 케이스 1개당 1줄인 `result.csv` 하나로 합칩니다.
 → [자세히](docs/merge_csv.md)
 
+### 이미지 글자를 텍스트로 — img_text
+
+```bash
+python tools/img_text.py 이미지또는폴더
+```
+
+이미지 안의 글자를 읽어 같은 이름의 `.txt`로 저장합니다 (`화면.png` → `화면.txt`). 설치할 것이 없습니다.
+→ [자세히](docs/img_text.md)
+
 ## 안 될 때
 
 [문제 해결](docs/troubleshooting.md)을 봅니다. folder_diff·func_diff의 옵션은 `-h`로도 볼 수 있습니다.

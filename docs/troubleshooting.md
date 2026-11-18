@@ -16,7 +16,7 @@
 
 ```
 work-toolkit/
-├─ tools/             도구 (folder_diff.py, func_diff.py, merge_csv.py)
+├─ tools/             도구 (folder_diff.py, func_diff.py, merge_csv.py, img_text.py)
 ├─ reports/           리포트 저장 위치 (git에 올라가지 않음)
 ├─ tests/             자동 테스트
 ├─ docs/              사용 설명서, 설계 문서
