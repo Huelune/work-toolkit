@@ -7,3 +7,15 @@ venv/
 *.html
 *.xlsx
 reports/
+
+# 도구에 넣는 대상 파일과 결과 (회사 자료가 올라가지 않게)
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.tif
+*.tiff
+*.txt
+!requirements.txt
