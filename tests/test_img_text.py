@@ -42,6 +42,14 @@ class ImgTextTest(unittest.TestCase):
             self.assertIn("[실패]", r.stdout)
             self.assertNotIn("secret", r.stdout + r.stderr)          # 이름·경로는 화면에 없음
 
+    def test_to_lines(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        from img_text import to_lines
+        # 인식기가 한 줄을 좌우로 나눠 순서를 섞어도 (글자, x, y, 높이) 위치로 줄을 다시 맞춘다
+        words = [("a", 0, 0, 10), ("c", 0, 20, 10), ("b", 50, 1, 10), ("〉", 50, 21, 10)]
+        self.assertEqual(to_lines(words), ["a b", "c >"])
+        self.assertEqual(to_lines([]), [])
+
 
 if __name__ == "__main__":
     unittest.main()
