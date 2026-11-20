@@ -33,7 +33,7 @@ class MergeCsvTest(unittest.TestCase):
             self.assertIn("DRM", r.stdout)
             with (d / "result.csv").open(encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.reader(f))
-            self.assertEqual(rows[0], ["test", "tc", "", "", "", ""])
+            self.assertEqual(rows[0], ["test", "tc", "", "input", "expect", "output"])
             self.assertEqual(rows[1], ["secret_case", "1", "first", "a : 1", "a : 9", "a : 0\nx : 5"])
             self.assertEqual(rows[2], ["secret_case", "2", "second", "b : 2", "a : 9", ""])
             self.assertEqual(rows[3], ["secret_case", "3", "third", "a : L1\nL2", "", ""])  # 셀 안 줄바꿈 유지

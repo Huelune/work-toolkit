@@ -21,9 +21,9 @@ python tools/merge_csv.py "D:\test\csv" reports/합본.csv  # 저장 위치 지�
 
 ## 결과 (`result.csv`)
 
-| test | tc | | | | |
+| test | tc | | input | expect | output |
 |---|---|---|---|---|---|
-| 파일명 | 번호 | 테스트명 | input 신호 | expect 신호 | output 신호 |
+| 파일명 | 번호 | 테스트명 | 신호 | 신호 | 신호 |
 
 - 값이 있는 신호만 `신호 : 값`으로, 셀 안에서 줄바꿈해 적습니다.
 - 넣을 섹션은 스크립트 위쪽 `OUT_SECTIONS`에서 바꿉니다 (예: `["input", "expect", "output", "toutput"]`).

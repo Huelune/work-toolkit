@@ -7,7 +7,7 @@
   4행~  : 번호, 테스트명, 신호값들...
 
 출력 (result.csv) - 테스트 케이스 1개당 1줄
-  test,tc,,,,
+  test,tc,,input,expect,output
   파일명, 번호, 테스트명, input "a : 1\nb : 2", expect "a : 1\n...", output "a : 1\nx : 0\n..."
   (값이 있는 신호만 '신호 : 값' 형태로 셀 안에서 줄바꿈)
 
@@ -22,7 +22,7 @@ from pathlib import Path
 
 HEADER_ROW = 2                        # 0부터 셈 → 3번째 줄
 OUT_SECTIONS = ["input", "expect", "output"]    # result에 넣을 섹션 순서 (toutput 추가 가능)
-OUT_HEADER = ["test", "tc", ""] + [""] * len(OUT_SECTIONS)
+OUT_HEADER = ["test", "tc", ""] + OUT_SECTIONS
 IN_ENCODINGS = ("utf-8-sig", "cp949")
 OUT_ENCODING = "utf-8-sig"            # 엑셀 한글용. 필요하면 "cp949"
 DRM_SIGNATURE = b"SCDSA"              # 문서보안(DRM) 암호화 파일 헤더
