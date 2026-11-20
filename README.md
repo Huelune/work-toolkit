@@ -38,6 +38,7 @@ python tools/func_diff.py 이전폴더 현재폴더 -o reports/결과
 ```bash
 python tools/merge_csv.py CSV폴더
 python tools/merge_csv.py CSV폴더 --sum 신호    # 신호의 파일별 합계 칸 추가
+python tools/merge_csv.py CSV폴더 --test-once   # 파일명을 파일의 첫 줄에만 적기
 ```
 
 폴더 안의 CSV를 테스트 케이스 1개당 1줄인 `result.csv` 하나로 합칩니다. 줄마다 input·expect·output 신호가 한 칸씩 들어갑니다.
