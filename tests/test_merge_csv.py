@@ -18,15 +18,42 @@ SAMPLE = (
 )
 
 
+def run(d, *opts):
+    return subprocess.run([sys.executable, str(ROOT / "tools" / "merge_csv.py"), str(d), *opts],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+
+
 class MergeCsvTest(unittest.TestCase):
+    def test_no_sum_option(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "case.csv").write_text(SAMPLE, encoding="cp949")
+            r = run(d)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("합계 제외", r.stdout)
+            with (d / "result.csv").open(encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.reader(f))
+            self.assertEqual(rows[0], ["test", "tc", "", "input", "expect", "output"])
+            self.assertEqual(rows[1], ["case", "1", "first", "a : 1", "a : 9", "a : 0\nx : 5"])
+
+    def test_sum_other_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "case.csv").write_text(SAMPLE, encoding="cp949")
+            r = run(d, "--sum", "a", "--sum", "expect:a")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with (d / "result.csv").open(encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.reader(f))
+            self.assertEqual(rows[0][6:], ["a 합", "a 합"])
+            self.assertEqual(rows[1][6:], ["4", "18"])
+
     def test_merge(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             (d / "secret_case.csv").write_text(SAMPLE, encoding="cp949")
             (d / "drm.csv").write_bytes(b"SCDSA\x00\x01")
-            r = subprocess.run([sys.executable, str(ROOT / "tools" / "merge_csv.py"), str(d)],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace",
-                               env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+            r = run(d, "--sum", "a")
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn("secret", r.stdout)          # 화면에 파일 이름이 찍히지 않음
             self.assertIn("파일 1개, 3줄", r.stdout)

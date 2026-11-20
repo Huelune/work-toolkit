@@ -7,6 +7,8 @@
 ```bash
 python tools/merge_csv.py "D:\test\csv"                  # → D:\test\csv\result.csv
 python tools/merge_csv.py "D:\test\csv" reports/합본.csv  # 저장 위치 지정
+python tools/merge_csv.py "D:\test\csv" --sum a          # input의 a를 파일마다 더해 적기
+python tools/merge_csv.py "D:\test\csv" --sum a --sum output:b   # 여러 개, 다른 섹션은 섹션:신호
 ```
 
 ## 입력 형식
@@ -27,6 +29,6 @@ python tools/merge_csv.py "D:\test\csv" reports/합본.csv  # 저장 위치 지�
 
 - 값이 있는 신호만 `신호 : 값`으로, 셀 안에서 줄바꿈해 적습니다.
 - 넣을 섹션은 스크립트 위쪽 `OUT_SECTIONS`에서 바꿉니다 (예: `["input", "expect", "output", "toutput"]`).
-- 맨 오른쪽 칸에는 `SUM_SIGNALS`에 적은 신호(기본 `("input", "a")`)를 한 파일의 모든 케이스에 걸쳐 더한 값을, 그 파일의 첫 줄에만 적습니다. 숫자가 아닌 값은 빼고 더하며, 뺀 개수는 화면에 나옵니다. 합계가 필요 없으면 `SUM_SIGNALS = []`.
+- `--sum 신호`를 주면 맨 오른쪽에 `신호 합` 칸이 생기고, 그 신호를 한 파일의 모든 케이스에 걸쳐 더한 값을 그 파일의 첫 줄에만 적습니다. 섹션을 빼면 input이고, 다른 섹션은 `--sum output:신호`처럼 씁니다. 숫자가 아닌 값은 빼고 더하며, 뺀 개수는 화면에 나옵니다. `--sum`이 없으면 합계 칸도 없습니다.
 - 엑셀에서 한글이 보이도록 UTF-8(BOM)로 저장합니다. 필요하면 `OUT_ENCODING = "cp949"`.
 - 화면에는 읽은 파일 수·줄 수와 건너뛴 이유별 개수만 나옵니다. 문서보안(DRM)이 걸린 파일은 건너뜁니다.
