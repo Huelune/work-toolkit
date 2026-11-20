@@ -64,8 +64,8 @@ class MergeCsvTest(unittest.TestCase):
             self.assertEqual(rows[0], ["test", "tc", "", "input", "expect", "output", "a 합"])
             # 합계(1+3)는 파일 첫 줄에만, 숫자가 아닌 값은 빼고 더함
             self.assertEqual(rows[1], ["secret_case", "1", "first", "a : 1", "a : 9", "a : 0\nx : 5", "4"])
-            self.assertEqual(rows[2], ["secret_case", "2", "second", "a : 3\nb : 2", "a : 9", "", ""])
-            self.assertEqual(rows[3], ["secret_case", "3", "third", "a : L1\nL2", "", "", ""])  # 셀 안 줄바꿈 유지
+            self.assertEqual(rows[2], ["", "2", "second", "a : 3\nb : 2", "a : 9", "", ""])
+            self.assertEqual(rows[3], ["", "3", "third", "a : L1\nL2", "", "", ""])  # 셀 안 줄바꿈 유지
 
 
 if __name__ == "__main__":

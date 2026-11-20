@@ -9,7 +9,7 @@
 출력 (result.csv) - 테스트 케이스 1개당 1줄
   test,tc,,input,expect,output
   파일명, 번호, 테스트명, input "a : 1\nb : 2", expect "a : 1\n...", output "a : 1\nx : 0\n..."
-  (값이 있는 신호만 '신호 : 값' 형태로 셀 안에서 줄바꿈)
+  (값이 있는 신호만 '신호 : 값' 형태로 셀 안에서 줄바꿈, 파일명은 그 파일의 첫 줄에만)
   --sum을 주면 맨 오른쪽 칸에 그 신호의 파일별 합계 (그 파일의 첫 줄에만)
 
 사용법:
@@ -93,8 +93,10 @@ def parse_file(path: Path, sum_signals=()):
         name = row[name_col].strip() if name_col is not None and name_col < len(row) else ""
         out.append([path.stem, tc, name] + ["\n".join(cells[s]) for s in OUT_SECTIONS]
                    + [""] * len(sums))
+    for r in out[1:]:
+        r[0] = ""                     # 파일명은 그 파일의 첫 줄에만
     if out:
-        out[0][3 + len(OUT_SECTIONS):] = ["" if v is None else str(v) for v in sums.values()]
+        out[0][3+ len(OUT_SECTIONS):] = ["" if v is None else str(v) for v in sums.values()]
     return out, bad
 
 
