@@ -45,6 +45,7 @@ class MergeCsvTest(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             with (d / "result.csv").open(encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.reader(f))
+            self.assertEqual(rows[2][0], "case")          # 옵션이 없으면 파일명은 줄마다
             self.assertEqual(rows[0][6:], ["a 합", "a 합"])
             self.assertEqual(rows[1][6:], ["4", "18"])
 
@@ -53,7 +54,7 @@ class MergeCsvTest(unittest.TestCase):
             d = Path(tmp)
             (d / "secret_case.csv").write_text(SAMPLE, encoding="cp949")
             (d / "drm.csv").write_bytes(b"SCDSA\x00\x01")
-            r = run(d, "--sum", "a")
+            r = run(d, "--sum", "a", "--test-once")
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn("secret", r.stdout)          # 화면에 파일 이름이 찍히지 않음
             self.assertIn("파일 1개, 3줄", r.stdout)
