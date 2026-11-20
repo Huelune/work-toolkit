@@ -13,7 +13,7 @@ SAMPLE = (
     ",<input>,a,b,<expect>,a,<output>,a,x\n"
     "1,first,1,,,9,,0,5\n"
     ",,,,,,,,\n"
-    "2,second,,2,,9,,,\n"
+    "2,second,3,2,,9,,,\n"
     "3,third,\"L1\nL2\",,,,,,\n"
 )
 
@@ -33,10 +33,12 @@ class MergeCsvTest(unittest.TestCase):
             self.assertIn("DRM", r.stdout)
             with (d / "result.csv").open(encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.reader(f))
-            self.assertEqual(rows[0], ["test", "tc", "", "input", "expect", "output"])
-            self.assertEqual(rows[1], ["secret_case", "1", "first", "a : 1", "a : 9", "a : 0\nx : 5"])
-            self.assertEqual(rows[2], ["secret_case", "2", "second", "b : 2", "a : 9", ""])
-            self.assertEqual(rows[3], ["secret_case", "3", "third", "a : L1\nL2", "", ""])  # 셀 안 줄바꿈 유지
+            self.assertIn("숫자가 아닌 값: 1개", r.stdout)
+            self.assertEqual(rows[0], ["test", "tc", "", "input", "expect", "output", "a 합"])
+            # 합계(1+3)는 파일 첫 줄에만, 숫자가 아닌 값은 빼고 더함
+            self.assertEqual(rows[1], ["secret_case", "1", "first", "a : 1", "a : 9", "a : 0\nx : 5", "4"])
+            self.assertEqual(rows[2], ["secret_case", "2", "second", "a : 3\nb : 2", "a : 9", "", ""])
+            self.assertEqual(rows[3], ["secret_case", "3", "third", "a : L1\nL2", "", "", ""])  # 셀 안 줄바꿈 유지
 
 
 if __name__ == "__main__":
